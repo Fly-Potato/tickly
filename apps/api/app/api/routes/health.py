@@ -1,4 +1,6 @@
-from fastapi import APIRouter, HTTPException, Request, status
+from fastapi import APIRouter, Request, status
+
+from app.core.errors import AppError
 
 
 router = APIRouter(tags=["system"])
@@ -12,8 +14,9 @@ async def health() -> dict[str, str]:
 @router.get("/ready")
 async def ready(request: Request) -> dict[str, str]:
     if not request.app.state.ready:
-        raise HTTPException(
+        raise AppError(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Service is not ready",
+            code="not_ready",
+            message="服务尚未就绪",
         )
     return {"status": "ready"}
