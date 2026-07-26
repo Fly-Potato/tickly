@@ -8,6 +8,8 @@
     "lint": "pnpm --filter @tickly/web lint",
     "format": "pnpm --filter @tickly/web format",
     "typecheck": "pnpm --filter @tickly/web typecheck",
-    "preview": "pnpm --filter @tickly/web preview"
+    "preview": "pnpm --filter @tickly/web preview",
+    "dev:api": "cd apps/api && uv run fastapi dev app/main.py",
+    "test:api": "cd apps/api && uv run pytest"
   }
 }
