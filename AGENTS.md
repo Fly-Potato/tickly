@@ -7,7 +7,7 @@ Tickly 是一个计划接入 AI 能力的类 Todo List 项目，采用 monorepo 
 当前状态：
 
 - `apps/web` 是主要应用，目前仍是基础 React 页面，Todo 业务尚未实现。
-- `apps/api` 是最小 FastAPI 骨架，目前仅提供 `GET /health`。
+- `apps/api` 是 FastAPI 骨架，提供 `/health`、生命周期感知的 `/ready`、请求 ID、统一错误和结构化日志；Todo/登录/ORM 尚未实现。
 - AI 功能尚未实现；不要把规划能力描述成现有能力。
 
 实现新功能前先确认当前任务属于 Web、API 还是真正需要跨应用复用的代码，不为可能出现的需求提前扩展架构。
@@ -28,6 +28,7 @@ Tickly 是一个计划接入 AI 能力的类 Todo List 项目，采用 monorepo 
 - Web 使用 React 19、TypeScript、Vite、Tailwind CSS 4、shadcn 与 Base UI。
 - API 使用 Python 3.13、FastAPI 和 pytest；依赖与锁文件分别是 `apps/api/pyproject.toml` 和 `apps/api/uv.lock`。
 - Python 依赖统一通过 uv 管理，不额外维护 pip requirements 文件。
+- Docker 使用根目录 `compose.yaml`；API 与 Web 镜像必须保持非 root 运行，并通过 `scripts/docker-smoke.sh` 验证。
 - 新增依赖前先确认现有依赖无法满足需求，并把依赖声明到实际使用它的应用或 workspace 包。
 
 ## 常用命令
@@ -56,6 +57,8 @@ mise exec -- pnpm lint
 mise exec -- pnpm typecheck
 mise exec -- pnpm build
 mise exec -- pnpm test:api
+mise exec -- pnpm check
+mise exec -- pnpm docker:smoke
 ```
 
 格式化会改写文件，只在需要格式化相关 TypeScript 或 TSX 文件时运行：
