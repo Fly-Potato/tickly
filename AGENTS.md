@@ -17,6 +17,7 @@ Tickly 是一个计划接入 AI 能力的类 Todo List 项目，采用 monorepo 
 - `apps/web`：React、TypeScript 与 Vite Web 应用。
 - `apps/api`：FastAPI 服务，由 uv 管理 Python 环境和依赖。
 - `packages/*`：跨 workspace 复用代码的预留位置；只有出现真实的跨应用消费者后才新增包。
+- `docs/roadmaps`：跨阶段的产品与工程路线图。
 - `docs/superpowers/specs`：已经确认的设计文档。
 - `docs/superpowers/plans`：对应设计的实施计划。
 
