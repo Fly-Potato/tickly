@@ -1,0 +1,17 @@
+:8080 {
+	encode zstd gzip
+
+	@api path /api/* /health /ready
+	handle @api {
+		reverse_proxy api:8000
+	}
+
+	handle {
+		root * /srv
+		route {
+			try_files {path} /index.html
+			header /index.html Cache-Control "public, max-age=0, must-revalidate"
+			file_server
+		}
+	}
+}
