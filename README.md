@@ -1,21 +1,27 @@
-# React + TypeScript + Vite + shadcn/ui
+# Tickly
 
-This is a template for a new Vite project with React, TypeScript, and shadcn/ui.
+Tickly is a React application managed as a pnpm monorepo. The web application lives in `apps/web`; reusable workspace packages belong in `packages/*`.
 
-## Adding components
+## Setup
 
-To add components to your app, run the following command:
+Node.js and pnpm are pinned by the root `mise.toml`.
 
 ```bash
-npx shadcn@latest add button
+mise install
+mise exec -- pnpm install
 ```
 
-This will place the ui components in the `src/components` directory.
+## Development
 
-## Using components
+Run these commands from the repository root:
 
-To use the components in your app, import them as follows:
-
-```tsx
-import { Button } from "@/components/ui/button"
+```bash
+mise exec -- pnpm dev
+mise exec -- pnpm build
+mise exec -- pnpm lint
+mise exec -- pnpm typecheck
+mise exec -- pnpm format
+mise exec -- pnpm preview
 ```
+
+The root commands target the `@tickly/web` workspace package through pnpm filters. The single `pnpm-lock.yaml` at the repository root is the source of truth for dependencies.
