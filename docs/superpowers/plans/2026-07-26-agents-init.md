@@ -1,0 +1,217 @@
+# Tickly 中文 AGENTS.md 初始化实施计划
+
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+
+**Goal:** 在仓库根目录创建一份准确描述 Tickly 当前状态、开发约定与验证要求的中文 `AGENTS.md`。
+
+**Architecture:** 使用单个根级 `AGENTS.md` 覆盖整个 monorepo，不创建子目录级规则文件。文档以当前仓库配置为事实来源，将现有 Web、最小 API 骨架与规划中的 Todo、AI 能力明确区分。
+
+**Tech Stack:** Markdown、pnpm workspace、mise、uv、React 19、TypeScript、Vite、Tailwind CSS 4、shadcn、Base UI、Python 3.13、FastAPI、pytest
+
+## Global Constraints
+
+- 只创建仓库根目录的 `AGENTS.md`，不创建子目录级 `AGENTS.md`。
+- 说明文字使用简洁中文，代码、路径、命令、包名和技术名称保留原文。
+- 明确 Tickly 是类 Todo List 产品，目前以 Web 为主，`apps/api` 仅有最小 FastAPI 骨架。
+- Todo 业务和 AI 能力必须标记为规划中或尚未实现。
+- 不修改应用代码、依赖、工具链、目录结构或现有文档。
+- 文档中的命令必须与根 `package.json`、`mise.toml`、`apps/web/package.json` 和 `apps/api/pyproject.toml` 一致。
+
+---
+
+### Task 1: 创建并验证根级中文协作说明
+
+**Files:**
+
+- Create: `AGENTS.md`
+- Reference: `docs/superpowers/specs/2026-07-26-agents-init-design.md`
+- Reference: `README.md`
+- Reference: `package.json`
+- Reference: `mise.toml`
+- Reference: `apps/web/package.json`
+- Reference: `apps/api/pyproject.toml`
+
+**Interfaces:**
+
+- Consumes: 当前 monorepo 的目录结构、工具版本、根脚本和已确认设计规格。
+- Produces: 根级 `AGENTS.md`，作为后续智能体在整个仓库中的默认协作规范。
+
+- [ ] **Step 1: 重新核对将写入文档的仓库事实**
+
+Run:
+
+```bash
+sed -n '1,220p' package.json
+sed -n '1,160p' mise.toml
+sed -n '1,220p' apps/web/package.json
+sed -n '1,180p' apps/api/pyproject.toml
+sed -n '1,160p' apps/api/app/main.py
+```
+
+Expected:
+
+- 根脚本包含 `dev`、`build`、`lint`、`format`、`typecheck`、`preview`、`dev:api` 和 `test:api`。
+- mise 声明 Node.js 24、pnpm 11 和 uv。
+- Web 使用 React、Vite、TypeScript、Tailwind CSS、shadcn 与 Base UI。
+- API 使用 Python 3.13、FastAPI 与 pytest，且当前业务路由只有 `GET /health`。
+
+- [ ] **Step 2: 创建根级 `AGENTS.md`**
+
+Create `AGENTS.md` with exactly this content:
+
+````markdown
+# Tickly 仓库协作指南
+
+## 项目定位
+
+Tickly 是一个计划接入 AI 能力的类 Todo List 项目，采用 monorepo 组织。
+
+当前状态：
+
+- `apps/web` 是主要应用，目前仍是基础 React 页面，Todo 业务尚未实现。
+- `apps/api` 是最小 FastAPI 骨架，目前仅提供 `GET /health`。
+- AI 功能尚未实现；不要把规划能力描述成现有能力。
+
+实现新功能前先确认当前任务属于 Web、API 还是真正需要跨应用复用的代码，不为可能出现的需求提前扩展架构。
+
+## 仓库结构
+
+- `apps/web`：React、TypeScript 与 Vite Web 应用。
+- `apps/api`：FastAPI 服务，由 uv 管理 Python 环境和依赖。
+- `packages/*`：跨 workspace 复用代码的预留位置；只有出现真实的跨应用消费者后才新增包。
+- `docs/superpowers/specs`：已经确认的设计文档。
+- `docs/superpowers/plans`：对应设计的实施计划。
+
+## 技术栈与依赖管理
+
+- 根 `mise.toml` 管理 Node.js 24、pnpm 11 和 uv。
+- JavaScript workspace 使用 pnpm，唯一锁文件是根 `pnpm-lock.yaml`。
+- Web 使用 React 19、TypeScript、Vite、Tailwind CSS 4、shadcn 与 Base UI。
+- API 使用 Python 3.13、FastAPI 和 pytest；依赖与锁文件分别是 `apps/api/pyproject.toml` 和 `apps/api/uv.lock`。
+- Python 依赖统一通过 uv 管理，不额外维护 pip requirements 文件。
+- 新增依赖前先确认现有依赖无法满足需求，并把依赖声明到实际使用它的应用或 workspace 包。
+
+## 常用命令
+
+除非正在排查工具链本身，命令均从仓库根目录执行，并优先使用 mise 提供的版本。
+
+安装工具与依赖：
+
+```bash
+mise install
+mise exec -- pnpm install
+mise exec -- uv sync --project apps/api --locked
+```
+
+本地开发：
+
+```bash
+mise exec -- pnpm dev
+mise exec -- pnpm dev:api
+```
+
+检查与测试：
+
+```bash
+mise exec -- pnpm lint
+mise exec -- pnpm typecheck
+mise exec -- pnpm build
+mise exec -- pnpm test:api
+```
+
+格式化会改写文件，只在需要格式化相关 TypeScript 或 TSX 文件时运行：
+
+```bash
+mise exec -- pnpm format
+```
+
+## 通用开发约定
+
+- 修改范围应聚焦当前任务，不顺带重构无关代码。
+- 尊重现有应用和包边界；不要为了预期复用提前创建 `packages/*` 包。
+- 优先延续仓库已有模式；引入新的目录层级或抽象前，先证明当前复杂度确实需要它。
+- 修改命令、目录、环境要求或公开接口时，同步更新相关文档。
+- 不提交密钥、令牌、`.env`、虚拟环境、缓存、构建产物或编辑器临时文件。
+- 不覆盖或清理与当前任务无关的用户改动。
+
+## Web 开发约定
+
+- 使用 TypeScript 与 React 函数组件，延续现有 `@/` 路径别名。
+- 优先复用 `apps/web/src/components/ui` 中的组件、现有 CSS 变量和设计令牌。
+- 组件保持单一职责；只有复杂度出现后，再拆分业务状态、网络访问和纯展示逻辑。
+- 新增交互时处理加载、空数据、错误、禁用状态以及基本键盘操作。
+- 不在浏览器代码中保存服务端密钥或模型供应商凭据。
+
+## API 开发约定
+
+- FastAPI 入口当前位于 `apps/api/app/main.py`；路由和业务增长后再按明确职责拆分模块。
+- 对外请求与响应使用明确类型，接口行为变化必须更新或新增 pytest 测试。
+- 通过 uv 和 `pyproject.toml` 管理依赖，不混用其他 Python 依赖来源。
+- 保留 `GET /health` 作为不依赖数据库和外部服务的基础健康检查。
+
+## AI 功能边界
+
+AI 功能尚未实现。开始接入时至少遵守以下约束：
+
+- 模型供应商密钥只保存在服务端，Web 必须通过 `apps/api` 使用 AI 能力。
+- 先定义清晰的 Web/API 契约，再实现具体模型调用。
+- 没有多个真实供应商或调用场景时，不提前构建复杂的通用模型抽象。
+- 流式接口需要处理正常完成、服务端错误、客户端取消和连接中断，并覆盖相应测试。
+- 向模型发送任务内容前，明确数据最小化、日志记录和敏感信息处理策略。
+
+## 验证要求
+
+根据改动范围执行最小但充分的验证：
+
+- Web 改动：运行 `mise exec -- pnpm lint`、`mise exec -- pnpm typecheck` 和 `mise exec -- pnpm build`。
+- API 改动：运行 `mise exec -- pnpm test:api`。
+- 跨端改动：执行 Web 与 API 两侧检查，并验证真实接口契约。
+- 仅文档改动：检查路径、命令、事实和 Markdown 结构，无需运行应用测试。
+
+完成说明必须列出实际运行过的检查及结果；未执行的检查不得描述为通过。
+````
+
+- [ ] **Step 3: 验证文档结构和关键事实**
+
+Run:
+
+```bash
+test -f AGENTS.md
+rg -n '^## (项目定位|仓库结构|技术栈与依赖管理|常用命令|通用开发约定|Web 开发约定|API 开发约定|AI 功能边界|验证要求)$' AGENTS.md
+rg -n 'Todo 业务尚未实现|GET /health|AI 功能尚未实现|mise exec -- pnpm test:api|模型供应商密钥只保存在服务端' AGENTS.md
+git diff --check
+```
+
+Expected:
+
+- `test` 返回退出码 0。
+- 第一条 `rg` 输出九个二级标题。
+- 第二条 `rg` 输出所有五项关键事实或约束。
+- `git diff --check` 不输出任何错误。
+
+- [ ] **Step 4: 检查修改范围**
+
+Run:
+
+```bash
+git status --short
+git diff -- AGENTS.md
+find apps packages -name AGENTS.md -print
+```
+
+Expected:
+
+- 本任务新增的工作树文件只有根 `AGENTS.md`。
+- diff 内容与 Step 2 完全一致。
+- `find` 不输出任何子目录级 `AGENTS.md`。
+
+- [ ] **Step 5: 提交根级协作说明**
+
+Run:
+
+```bash
+git add AGENTS.md
+git commit -m "docs: add Chinese agent guide"
+```
+
+Expected: 创建一个只包含根 `AGENTS.md` 的提交，提交信息为 `docs: add Chinese agent guide`。
