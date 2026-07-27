@@ -13,6 +13,17 @@ def test_default_settings_are_for_local_development() -> None:
     assert settings.log_level == "INFO"
     assert settings.log_json is False
     assert settings.request_id_header == "X-Request-ID"
+    assert settings.database_url == "sqlite:///./data/tickly.db"
+
+
+def test_database_url_can_be_overridden_by_environment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("TICKLY_DATABASE_URL", "sqlite:////data/tickly.db")
+
+    settings = Settings(_env_file=None)
+
+    assert settings.database_url == "sqlite:////data/tickly.db"
 
 
 def test_tickly_prefixed_environment_variables_are_loaded(

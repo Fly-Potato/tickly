@@ -25,6 +25,8 @@ WORKDIR /app
 
 COPY --from=builder --chown=tickly:tickly /app/.venv /app/.venv
 COPY --chown=tickly:tickly apps/api/app /app/app
+COPY --chown=tickly:tickly apps/api/alembic.ini /app/alembic.ini
+COPY --chown=tickly:tickly apps/api/alembic /app/alembic
 
 USER tickly
 

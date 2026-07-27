@@ -18,6 +18,7 @@ dist-ssr
 __pycache__/
 .pytest_cache/
 *.py[cod]
+apps/api/data/*.db
 
 # Editor directories and files
 .vscode/*

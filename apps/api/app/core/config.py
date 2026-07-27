@@ -31,6 +31,7 @@ class Settings(BaseSettings):
     log_level: LogLevel = "INFO"
     log_json: bool = False
     request_id_header: str = "X-Request-ID"
+    database_url: str = "sqlite:///./data/tickly.db"
 
     @field_validator("api_v1_prefix")
     @classmethod

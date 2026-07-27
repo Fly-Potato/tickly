@@ -10,6 +10,22 @@ Tickly 是一个计划接入 AI 能力的个人多设备 Todo 应用 monorepo。
 
 Todo 领域、登录、数据库和 AI 行为尚未实现；当前阶段完成工程基线与容器部署骨架。
 
+数据库 schema 通过 Alembic 显式管理。API 本地默认使用 `apps/api/data/tickly.db`，首次运行前执行：
+
+```bash
+cd apps/api
+./.venv/bin/alembic upgrade head
+./.venv/bin/alembic current
+```
+
+回退本地 schema：
+
+```bash
+./.venv/bin/alembic downgrade base
+```
+
+应用启动不会自动创建或修改生产数据库 schema。
+
 ## 初始化
 
 ```bash
