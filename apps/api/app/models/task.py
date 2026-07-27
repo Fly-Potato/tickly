@@ -15,11 +15,13 @@ if TYPE_CHECKING:
 class Task(Base):
     __tablename__ = "tasks"
     __table_args__ = (
+        # 约束放在数据库层，防止绕过 API 校验的脚本写入非法任务数据。
         CheckConstraint("length(title) BETWEEN 1 AND 200", name="ck_tasks_title_length"),
         CheckConstraint(
             "priority IN ('none', 'low', 'medium', 'high')", name="ck_tasks_priority"
         ),
         CheckConstraint("notes IS NULL OR length(notes) <= 4000", name="ck_tasks_notes_length"),
+        # 列表查询始终按用户过滤，复合索引覆盖常用状态、截止时间和创建时间排序。
         Index("ix_tasks_user_completed", "user_id", "is_completed"),
         Index("ix_tasks_user_due", "user_id", "due_at"),
         Index("ix_tasks_user_created", "user_id", "created_at"),

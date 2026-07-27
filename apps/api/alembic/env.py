@@ -6,7 +6,7 @@ from sqlalchemy import pool
 from app.core.config import Settings
 from app.db.base import Base
 from app.db.session import create_engine_for_settings
-from app import models  # noqa: F401
+from app import models  # noqa: F401  # 导入模型以注册所有表，供 Alembic 比对 metadata。
 
 
 config = context.config
@@ -18,11 +18,13 @@ target_metadata = Base.metadata
 
 
 def database_url() -> str:
+    # 测试和 CLI 可通过 Config 覆盖 URL；未覆盖时才读取应用默认配置。
     configured_url = config.get_main_option("sqlalchemy.url")
     return configured_url or Settings().database_url
 
 
 def run_migrations_offline() -> None:
+    # 离线模式只生成 SQL，不建立数据库连接，供发布前审查 migration 使用。
     context.configure(
         url=database_url(),
         target_metadata=target_metadata,
@@ -34,6 +36,7 @@ def run_migrations_offline() -> None:
 
 
 def run_migrations_online() -> None:
+    # 在线 migration 复用应用的 SQLite 连接配置，确保 PRAGMA 行为保持一致。
     settings = Settings(database_url=database_url(), _env_file=None)
     connectable = create_engine_for_settings(settings, poolclass=pool.NullPool)
 

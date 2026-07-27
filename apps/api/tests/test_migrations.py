@@ -12,6 +12,7 @@ def test_initial_migration_can_upgrade_and_downgrade_file_database(tmp_path: Pat
     config = Config("alembic.ini")
     config.set_main_option("sqlalchemy.url", f"sqlite:///{database_path}")
 
+    # 使用真实临时文件验证 migration，不把内存数据库当作唯一集成环境。
     command.upgrade(config, "head")
     engine = create_engine_for_settings(
         type("Settings", (), {"database_url": f"sqlite:///{database_path}"})()
@@ -25,5 +26,6 @@ def test_initial_migration_can_upgrade_and_downgrade_file_database(tmp_path: Pat
     }
 
     command.downgrade(config, "base")
+    # Alembic 自己的版本表保留，但业务表必须全部回退。
     assert set(inspect(engine).get_table_names()) == {"alembic_version"}
     engine.dispose()
