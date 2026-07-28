@@ -1,7 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest"
 
-import { ApiError } from "@/lib/api-error"
-
 const api = vi.hoisted(() => ({
   apiFetch: vi.fn(),
 }))
@@ -107,7 +105,7 @@ describe("任务 API 客户端", () => {
     )
 
     await expect(deleteTask("missing")).rejects.toEqual(
-      expect.objectContaining<ApiError>({
+      expect.objectContaining({
         status: 404,
         code: "task_not_found",
         message: "任务不存在",
