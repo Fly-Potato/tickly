@@ -41,7 +41,7 @@ function initialValues(task: Task, timeZone: string): EditorValues {
   }
 }
 
-export function buildTaskPatch(
+function buildTaskPatch(
   task: Task,
   values: EditorValues,
   timeZone: string,

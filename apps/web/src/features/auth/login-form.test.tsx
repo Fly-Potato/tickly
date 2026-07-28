@@ -26,7 +26,15 @@ vi.mock("./auth-context", () => ({
   useAuth: () => auth,
 }))
 
+function jsonResponse(body: unknown, status = 200) {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { "Content-Type": "application/json" },
+  })
+}
+
 beforeEach(() => {
+  vi.unstubAllGlobals()
   auth.state = { status: "anonymous" }
   auth.login.mockReset()
   auth.logout.mockReset()
@@ -108,11 +116,23 @@ describe("App 认证状态门", () => {
       },
     }
     auth.logout.mockResolvedValue(undefined)
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        if (String(input).startsWith("/api/v1/tasks?")) {
+          return jsonResponse({ items: [], next_cursor: null })
+        }
+        throw new Error(`未预期的请求：${String(input)}`)
+      }),
+    )
     const user = userEvent.setup()
     render(<App />)
 
     expect(screen.getByText("potato")).toBeInTheDocument()
-    expect(screen.getByText("认证已就绪")).toBeInTheDocument()
+    expect(screen.getByText("Asia/Shanghai")).toBeInTheDocument()
+    expect(
+      screen.getByRole("heading", { name: "今天要完成什么？" }),
+    ).toBeInTheDocument()
     await user.click(screen.getByRole("button", { name: "退出登录" }))
     expect(auth.logout).toHaveBeenCalledOnce()
   })
