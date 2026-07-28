@@ -8,7 +8,7 @@ Tickly 是一个计划接入 AI 能力的个人多设备 Todo 应用 monorepo。
 - `docs/roadmaps`：0 到 1 产品与工程路线图
 - `docs/superpowers`：已确认的设计与实施计划
 
-当前已完成工程与容器基线、SQLAlchemy/SQLite 持久化，以及单账号用户名 + JWT 认证闭环。Web 已提供登录、认证恢复和退出；API 已提供登录、refresh 轮换、登出和当前用户接口；账号只能通过后端 CLI 创建和维护。Todo 业务与 AI 能力尚未实现。
+当前已完成工程与容器基线、SQLAlchemy/SQLite 持久化、单账号用户名 + JWT 认证闭环，以及受当前用户所有权保护的 Todo API。Web 已提供登录、认证恢复和退出；Todo Web 与 AI 能力尚未实现。账号只能通过后端 CLI 创建和维护。
 
 数据库 schema 通过 Alembic 显式管理。API 本地默认使用 `apps/api/data/tickly.db`，首次运行前执行：
 
@@ -43,7 +43,16 @@ mise exec -- pnpm dev:api
 ```
 
 Vite 默认将 `/api` 代理到 `http://127.0.0.1:8000`，可通过 `VITE_API_PROXY_TARGET` 覆盖。
-API 当前提供 `/health`、`/ready`、`/api/v1/auth/login`、`/api/v1/auth/refresh`、`/api/v1/auth/logout`、`/api/v1/auth/me` 以及 FastAPI 文档路由；`/ready` 仅在应用 lifespan 已启动、数据库可访问且数据库 revision 与代码中的 migration head 一致时返回成功。
+API 当前提供以下业务路由以及 `/health`、`/ready` 和 FastAPI 文档路由：
+
+- `/api/v1/auth/login`
+- `/api/v1/auth/refresh`
+- `/api/v1/auth/logout`
+- `/api/v1/auth/me`
+- `/api/v1/tasks`
+- `/api/v1/tasks/{task_id}`
+
+任务 API 支持 CRUD、完成/取消完成、状态筛选、排序和稳定 cursor 分页。`/ready` 仅在应用 lifespan 已启动、数据库可访问且数据库 revision 与代码中的 migration head 一致时返回成功。
 
 本地 API 开发可复制 `apps/api/.env.example`；其中 JWT 密钥仅用于开发。用户名会先去除首尾空白并转为小写，只允许 3–32 位小写字母、数字、下划线和连字符。
 

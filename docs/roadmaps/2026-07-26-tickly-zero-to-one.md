@@ -25,7 +25,7 @@
 tickly/
 ├── apps/
 │   ├── web/                 # React 登录、认证状态与受保护壳层
-│   └── api/                 # FastAPI、SQLite、CLI 与 JWT 认证
+│   └── api/                 # FastAPI、SQLite、认证与 Todo API
 ├── packages/                # 共享包预留目录
 ├── docs/
 ├── compose.yaml
@@ -36,12 +36,11 @@ tickly/
 
 当前尚未实现：
 
-- Todo 业务 API。
 - Todo 页面与业务交互。
 - AI 供应商集成。
 - VPS HTTPS、备份、恢复和完整发布流程。
 
-阶段 0 的工程与 Docker 骨架、阶段 1 的 SQLAlchemy/SQLite/Alembic 数据层和阶段 2 的用户名 + JWT 认证均已实现。Web 与 API 自动化测试已接入，Docker smoke 覆盖 migration、CLI 创建账号、登录 Cookie 与 `/me`；后续从阶段 3 Todo API 开始。
+阶段 0–3 已实现，已具备工程与 Docker 骨架、SQLAlchemy/SQLite/Alembic 数据层、用户名 + JWT 认证和受用户所有权保护的 Todo API。Web 与 API 自动化测试已接入，Docker smoke 覆盖 migration、CLI 创建账号、登录 Cookie 与 `/me`；后续从阶段 4 Todo Web 开始。
 
 ## 架构方案比较
 
@@ -637,7 +636,7 @@ refresh JWT 额外包含 `sid`，并使用 `type=refresh`。解码时固定允�
 6. AI 任务草稿。
 7. VPS Docker Compose、备份与恢复。
 
-阶段 0–2 已完成。下一份规格只覆盖第 4 项 Todo API；每个阶段完成、验证并审阅后，再设计下一阶段。
+阶段 0–3 已完成。下一份规格只覆盖第 5 项 Todo Web；每个阶段完成、验证并审阅后，再设计下一阶段。
 
 ## 文档依据
 

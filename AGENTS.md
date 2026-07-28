@@ -7,7 +7,7 @@ Tickly 是一个计划接入 AI 能力的类 Todo List 项目，采用 monorepo 
 当前状态：
 
 - `apps/web` 已具备用户名登录页、内存 access token、自动 refresh、认证状态恢复、受保护壳层和 Vitest 测试；Todo 业务尚未实现。
-- `apps/api` 已具备 FastAPI 应用工厂、`/health`、数据库与 migration 感知的 `/ready`、请求 ID、统一错误、结构化日志、SQLAlchemy/SQLite 数据层、Alembic migration、单账号 CLI 和 JWT/refresh 会话认证；Todo 流程尚未实现。
+- `apps/api` 已具备 FastAPI 应用工厂、`/health`、数据库与 migration 感知的 `/ready`、请求 ID、统一错误、结构化日志、SQLAlchemy/SQLite 数据层、Alembic migration、单账号 CLI、JWT/refresh 会话认证，以及受当前用户所有权保护的 Todo API。
 - AI 功能尚未实现；不要把规划能力描述成现有能力。
 
 实现新功能前先确认当前任务属于 Web、API 还是真正需要跨应用复用的代码，不为可能出现的需求提前扩展架构。
