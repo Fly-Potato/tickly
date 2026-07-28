@@ -1,3 +1,5 @@
+import { errorCode, responseError } from "@/lib/api-error"
+
 export type AuthUser = {
   id: string
   username: string
@@ -9,29 +11,6 @@ export type TokenResponse = {
   access_token: string
   token_type: "bearer"
   expires_in: number
-}
-
-type ErrorEnvelope = {
-  error?: {
-    code?: string
-    message?: string
-  }
-}
-
-export class ApiError extends Error {
-  readonly status: number
-  readonly code: string
-
-  constructor(
-    status: number,
-    code: string,
-    message: string,
-  ) {
-    super(message)
-    this.name = "ApiError"
-    this.status = status
-    this.code = code
-  }
 }
 
 let accessToken: string | null = null
@@ -148,28 +127,6 @@ async function requestJson<T>(url: string, init: RequestInit): Promise<T> {
     throw await responseError(response)
   }
   return (await response.json()) as T
-}
-
-async function errorCode(response: Response): Promise<string | undefined> {
-  try {
-    const payload = (await response.clone().json()) as ErrorEnvelope
-    return payload.error?.code
-  } catch {
-    return undefined
-  }
-}
-
-async function responseError(response: Response): Promise<ApiError> {
-  try {
-    const payload = (await response.clone().json()) as ErrorEnvelope
-    return new ApiError(
-      response.status,
-      payload.error?.code ?? "request_failed",
-      payload.error?.message ?? "请求失败",
-    )
-  } catch {
-    return new ApiError(response.status, "request_failed", "请求失败")
-  }
 }
 
 function notifyAuthenticationFailure() {
