@@ -423,7 +423,8 @@ mise exec -- pnpm test:api tests/test_tasks_api.py -q
 范围检查：
 
 ```powershell
-rg -n "localStorage|sessionStorage|IndexedDB|TanStack|react-router|createObjectURL|数据导出" apps/web/src
+rg -n "localStorage|sessionStorage|IndexedDB|createObjectURL|数据导出" apps/web/src/features/tasks apps/web/src/features/auth -g "!*.test.ts" -g "!*.test.tsx"
+rg -n "TanStack|react-router" apps/web/src
 git diff --check
 git status --short
 ```

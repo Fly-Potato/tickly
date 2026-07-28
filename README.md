@@ -8,7 +8,7 @@ Tickly 是一个计划接入 AI 能力的个人多设备 Todo 应用 monorepo。
 - `docs/roadmaps`：0 到 1 产品与工程路线图
 - `docs/superpowers`：已确认的设计与实施计划
 
-当前已完成工程与容器基线、SQLAlchemy/SQLite 持久化、单账号用户名 + JWT 认证闭环，以及受当前用户所有权保护的 Todo API。Web 已提供登录、认证恢复和退出；Todo Web 与 AI 能力尚未实现。账号只能通过后端 CLI 创建和维护。
+当前已完成工程与容器基线、SQLAlchemy/SQLite 持久化、单账号用户名 + JWT 认证闭环、受当前用户所有权保护的 Todo API，以及响应式 Todo Web。Web 支持快速新增、筛选、排序、cursor 加载更多、编辑、完成回滚、删除确认和账号 IANA 时区；AI 能力尚未实现。账号只能通过后端 CLI 创建和维护。
 
 数据库 schema 通过 Alembic 显式管理。API 本地默认使用 `apps/api/data/tickly.db`，首次运行前执行：
 
