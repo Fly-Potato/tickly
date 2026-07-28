@@ -2,7 +2,7 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 from uuid import uuid4
 
-from sqlalchemy import String
+from sqlalchemy import CheckConstraint, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
@@ -18,9 +18,21 @@ def utc_now() -> datetime:
 
 class User(Base):
     __tablename__ = "users"
+    __table_args__ = (
+        # 用户名同时承担登录标识，数据库约束防止脚本绕过应用层规范化。
+        CheckConstraint(
+            "length(username) BETWEEN 3 AND 32",
+            name="ck_users_username_length",
+        ),
+        CheckConstraint(
+            "username = lower(username) "
+            "AND username NOT GLOB '*[^a-z0-9_-]*'",
+            name="ck_users_username_format",
+        ),
+    )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
-    email: Mapped[str] = mapped_column(String(320), unique=True, nullable=False)
+    username: Mapped[str] = mapped_column(String(32), unique=True, nullable=False)
     password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
     timezone: Mapped[str] = mapped_column(String(64), nullable=False, default="Asia/Shanghai")
     is_active: Mapped[bool] = mapped_column(nullable=False, default=True)

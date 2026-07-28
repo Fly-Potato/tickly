@@ -26,6 +26,16 @@ def test_initial_migration_can_upgrade_and_downgrade_file_database(tmp_path: Pat
         "auth_sessions",
         "tasks",
     }
+    user_columns = {column["name"] for column in inspector.get_columns("users")}
+    user_checks = {
+        check["name"] for check in inspector.get_check_constraints("users")
+    }
+    assert "username" in user_columns
+    assert "email" not in user_columns
+    assert {
+        "ck_users_username_length",
+        "ck_users_username_format",
+    } <= user_checks
 
     command.downgrade(config, "base")
     # Alembic 自己的版本表保留，但业务表必须全部回退。

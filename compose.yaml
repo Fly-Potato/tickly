@@ -6,7 +6,9 @@ services:
     environment:
       TICKLY_DATABASE_URL: sqlite:////data/tickly.db
       TICKLY_ENVIRONMENT: production
+      TICKLY_JWT_SECRET: ${TICKLY_JWT_SECRET:?TICKLY_JWT_SECRET is required}
       TICKLY_LOG_JSON: "true"
+      TICKLY_REFRESH_COOKIE_SECURE: ${TICKLY_REFRESH_COOKIE_SECURE:-true}
     expose:
       - "8000"
     volumes:

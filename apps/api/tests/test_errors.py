@@ -1,5 +1,8 @@
+import sqlite3
+
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
+from sqlalchemy.exc import OperationalError
 
 from app.core.config import Environment, Settings
 from app.main import create_app
@@ -19,6 +22,22 @@ def make_app():
     @app.get("/test/boom")
     async def raise_unhandled_error() -> None:
         raise RuntimeError("secret internal text")
+
+    @app.get("/test/database-busy")
+    async def raise_database_busy() -> None:
+        raise OperationalError(
+            "SELECT secret_value",
+            {},
+            sqlite3.OperationalError("database is locked"),
+        )
+
+    @app.get("/test/database-error")
+    async def raise_other_database_error() -> None:
+        raise OperationalError(
+            "SELECT secret_value",
+            {},
+            sqlite3.OperationalError("no such table: secret_table"),
+        )
 
     return app
 
@@ -57,3 +76,34 @@ def test_unhandled_error_does_not_leak_exception_text() -> None:
     assert response.headers["X-Request-ID"] == "boom"
     assert response.json() == {"error": {"code": "internal_error", "message": "服务器内部错误", "request_id": "boom", "details": []}}
     assert "secret internal text" not in response.text
+
+
+def test_sqlite_busy_error_is_a_stable_retryable_response() -> None:
+    with TestClient(make_app(), raise_server_exceptions=False) as client:
+        response = client.get(
+            "/test/database-busy", headers={"X-Request-ID": "busy-request"}
+        )
+
+    assert response.status_code == 503
+    assert response.json() == {
+        "error": {
+            "code": "database_busy",
+            "message": "数据库繁忙，请稍后重试",
+            "request_id": "busy-request",
+            "details": [],
+        }
+    }
+    assert "SELECT secret_value" not in response.text
+    assert "database is locked" not in response.text
+
+
+def test_other_operational_error_remains_a_sanitized_internal_error() -> None:
+    with TestClient(make_app(), raise_server_exceptions=False) as client:
+        response = client.get(
+            "/test/database-error", headers={"X-Request-ID": "database-error"}
+        )
+
+    assert response.status_code == 500
+    assert response.json()["error"]["code"] == "internal_error"
+    assert "SELECT secret_value" not in response.text
+    assert "secret_table" not in response.text

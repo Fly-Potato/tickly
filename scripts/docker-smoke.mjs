@@ -1,15 +1,27 @@
 import { spawn } from "node:child_process"
+import { randomBytes } from "node:crypto"
 import process from "node:process"
 
 const projectName = `tickly-smoke-${process.pid}`
 const repositoryRoot = process.cwd()
+const smokeUsername = "smoke-user"
+const smokePassword = randomBytes(24).toString("base64url")
 
-function run(command, args, { capture = false, allowFailure = false } = {}) {
+// 只向本次 smoke 的 Compose 子进程注入一次性生产配置，不写入文件或日志。
+process.env.TICKLY_JWT_SECRET = randomBytes(32).toString("hex")
+process.env.TICKLY_REFRESH_COOKIE_SECURE = "true"
+
+function run(
+  command,
+  args,
+  { capture = false, allowFailure = false, input } = {},
+) {
   return new Promise((resolve, reject) => {
+    const stdin = input === undefined ? (capture ? "ignore" : "inherit") : "pipe"
     const child = spawn(command, args, {
       cwd: repositoryRoot,
       shell: false,
-      stdio: capture ? ["ignore", "pipe", "pipe"] : "inherit",
+      stdio: [stdin, capture ? "pipe" : "inherit", capture ? "pipe" : "inherit"],
     })
     let stdout = ""
     let stderr = ""
@@ -23,6 +35,10 @@ function run(command, args, { capture = false, allowFailure = false } = {}) {
       child.stderr.on("data", (chunk) => {
         stderr += chunk
       })
+    }
+
+    if (input !== undefined) {
+      child.stdin.end(input)
     }
 
     child.on("error", reject)
@@ -95,6 +111,53 @@ async function requestText(url) {
   return response.text()
 }
 
+async function loginThroughWeb() {
+  const response = await fetch("http://127.0.0.1:8080/api/v1/auth/login", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      username: smokeUsername,
+      password: smokePassword,
+    }),
+  })
+  if (!response.ok) {
+    throw new Error(`登录接口返回 HTTP ${response.status}`)
+  }
+
+  const cookie = response.headers.get("set-cookie") ?? ""
+  const normalizedCookie = cookie.toLowerCase()
+  for (const attribute of [
+    "tickly_refresh=",
+    "httponly",
+    "secure",
+    "samesite=strict",
+    "path=/api/v1/auth",
+  ]) {
+    if (!normalizedCookie.includes(attribute)) {
+      throw new Error(`refresh Cookie 缺少属性：${attribute}`)
+    }
+  }
+
+  const payload = await response.json()
+  if (payload.token_type !== "bearer" || typeof payload.access_token !== "string") {
+    throw new Error("登录响应未返回有效 access token")
+  }
+  return payload.access_token
+}
+
+async function assertCurrentUser(accessToken) {
+  const response = await fetch("http://127.0.0.1:8080/api/v1/auth/me", {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  })
+  if (!response.ok) {
+    throw new Error(`/auth/me 返回 HTTP ${response.status}`)
+  }
+  const payload = await response.json()
+  if (payload.username !== smokeUsername) {
+    throw new Error("/auth/me 未返回 smoke 账号")
+  }
+}
+
 async function assertNonRoot(container, service) {
   const result = await run(
     "docker",
@@ -123,6 +186,23 @@ async function main() {
   await compose(["build"])
   // migration 必须是独立步骤；API 启动命令不得隐式修改生产 schema。
   await compose(["run", "--rm", "api", "alembic", "upgrade", "head"])
+  // 密码只经 stdin 进入 getpass，不出现在 argv、Compose 环境或命令日志中。
+  await compose(
+    [
+      "run",
+      "--rm",
+      "-T",
+      "api",
+      "python",
+      "-m",
+      "app.cli",
+      "user",
+      "create",
+      "--username",
+      smokeUsername,
+    ],
+    { input: `${smokePassword}\n${smokePassword}\n` },
+  )
   await compose(["up", "--detach"])
 
   const apiContainer = await waitForHealthy("api")
@@ -138,6 +218,8 @@ async function main() {
   if ((await requestText("http://127.0.0.1:8080/ready")) !== '{"status":"ready"}') {
     throw new Error("/ready 响应不符合预期")
   }
+  const accessToken = await loginThroughWeb()
+  await assertCurrentUser(accessToken)
 
   const publishedApiPorts = await run("docker", ["port", apiContainer], {
     capture: true,

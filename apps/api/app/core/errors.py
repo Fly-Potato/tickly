@@ -1,9 +1,11 @@
 import logging
+import sqlite3
 from typing import Any
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from sqlalchemy.exc import OperationalError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 
@@ -11,12 +13,13 @@ logger = logging.getLogger("tickly.errors")
 
 
 class AppError(Exception):
-    def __init__(self, *, status_code: int, code: str, message: str, details: list[dict[str, Any]] | None = None) -> None:
+    def __init__(self, *, status_code: int, code: str, message: str, details: list[dict[str, Any]] | None = None, headers: dict[str, str] | None = None) -> None:
         super().__init__(message)
         self.status_code = status_code
         self.code = code
         self.message = message
         self.details = details or []
+        self.headers = headers or {}
 
 
 def request_id_from(request: Request) -> str:
@@ -35,7 +38,7 @@ def response_headers(request: Request, existing: dict[str, str] | None = None) -
 
 
 async def handle_app_error(request: Request, exc: AppError) -> JSONResponse:
-    return JSONResponse(status_code=exc.status_code, content=error_content(request, code=exc.code, message=exc.message, details=exc.details), headers=response_headers(request))
+    return JSONResponse(status_code=exc.status_code, content=error_content(request, code=exc.code, message=exc.message, details=exc.details), headers=response_headers(request, exc.headers))
 
 
 async def handle_validation_error(request: Request, exc: RequestValidationError) -> JSONResponse:
@@ -57,8 +60,33 @@ async def handle_unexpected_error(request: Request, exc: Exception) -> JSONRespo
     return JSONResponse(status_code=500, content=error_content(request, code="internal_error", message="服务器内部错误"), headers=response_headers(request))
 
 
+async def handle_database_operational_error(
+    request: Request, exc: OperationalError
+) -> JSONResponse:
+    """仅把 SQLite 锁竞争映射为可重试错误，其余数据库异常继续隐藏细节。"""
+
+    original = exc.orig
+    message = str(original).lower()
+    if isinstance(original, sqlite3.OperationalError) and (
+        "database is locked" in message or "database table is locked" in message
+    ):
+        return JSONResponse(
+            status_code=503,
+            content=error_content(
+                request,
+                code="database_busy",
+                message="数据库繁忙，请稍后重试",
+            ),
+            headers=response_headers(request),
+        )
+
+    # SQL、参数与底层异常文本不得进入响应，沿用统一的内部错误边界。
+    return await handle_unexpected_error(request, exc)
+
+
 def register_exception_handlers(app: FastAPI) -> None:
     app.add_exception_handler(AppError, handle_app_error)
     app.add_exception_handler(RequestValidationError, handle_validation_error)
     app.add_exception_handler(StarletteHTTPException, handle_http_error)
+    app.add_exception_handler(OperationalError, handle_database_operational_error)
     app.add_exception_handler(Exception, handle_unexpected_error)

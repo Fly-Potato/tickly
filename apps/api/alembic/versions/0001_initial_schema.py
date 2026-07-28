@@ -21,14 +21,23 @@ def upgrade() -> None:
     op.create_table(
         "users",
         sa.Column("id", sa.String(length=36), nullable=False),
-        sa.Column("email", sa.String(length=320), nullable=False),
+        sa.Column("username", sa.String(length=32), nullable=False),
         sa.Column("password_hash", sa.String(length=255), nullable=False),
         sa.Column("timezone", sa.String(length=64), nullable=False, server_default="Asia/Shanghai"),
         sa.Column("is_active", sa.Boolean(), nullable=False, server_default=sa.true()),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
         sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
+        sa.CheckConstraint(
+            "length(username) BETWEEN 3 AND 32",
+            name="ck_users_username_length",
+        ),
+        sa.CheckConstraint(
+            "username = lower(username) "
+            "AND username NOT GLOB '*[^a-z0-9_-]*'",
+            name="ck_users_username_format",
+        ),
         sa.PrimaryKeyConstraint("id"),
-        sa.UniqueConstraint("email"),
+        sa.UniqueConstraint("username"),
     )
     op.create_table(
         "auth_sessions",

@@ -1,11 +1,7 @@
-from collections.abc import Generator
 from typing import Any
 
 from sqlalchemy import Engine, create_engine, event
 from sqlalchemy.orm import Session, sessionmaker
-
-from app.core.config import Settings
-
 
 def create_engine_for_settings(settings: Any, **engine_kwargs: Any) -> Engine:
     connect_args: dict[str, Any] = {}
@@ -42,21 +38,3 @@ def create_session_factory(database_engine: Engine) -> sessionmaker[Session]:
         autocommit=False,
         expire_on_commit=False,
     )
-
-
-engine = create_engine_for_settings(Settings())
-SessionLocal = create_session_factory(engine)
-
-
-def get_db_session(
-    session_factory: sessionmaker[Session] = SessionLocal,
-) -> Generator[Session, None, None]:
-    session = session_factory()
-    try:
-        yield session
-    except Exception:
-        # 请求内任意异常都必须回滚，避免未提交的写入污染连接后续请求。
-        session.rollback()
-        raise
-    finally:
-        session.close()

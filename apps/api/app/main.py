@@ -11,7 +11,7 @@ from app.api.routes.health import router as health_router
 from app.core.config import API_ROOT, Settings
 from app.core.errors import register_exception_handlers
 from app.core.logging import configure_logging
-from app.db.session import create_engine_for_settings
+from app.db.session import create_engine_for_settings, create_session_factory
 from app.middleware.request_id import RequestIdMiddleware
 
 
@@ -49,6 +49,10 @@ def create_app(
     application.state.settings = resolved_settings
     application.state.ready = False
     application.state.database_engine = resolved_database_engine
+    # Session factory 必须绑定当前应用持有或注入的 Engine，不能使用导入期全局对象。
+    application.state.database_session_factory = create_session_factory(
+        resolved_database_engine
+    )
     application.state.owns_database_engine = database_engine is None
     application.state.alembic_config = Config(str(API_ROOT / "alembic.ini"))
     application.add_middleware(

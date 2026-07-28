@@ -2,7 +2,7 @@
 
 ## 目标
 
-将当前只有基础 React 页面和 FastAPI 健康检查的 Tickly，逐步建设为可部署在单台 VPS、支持个人多设备使用、具备安全登录、持久化 Todo 管理和自然语言任务草稿能力的完整应用。
+将已具备工程基线、持久化和安全登录的 Tickly，逐步建设为可部署在单台 VPS、支持个人多设备使用、具备持久化 Todo 管理和自然语言任务草稿能力的完整应用。
 
 每个阶段都必须形成可独立验证的交付物。不得一次性铺设全部架构，也不得在核心 Todo 闭环稳定前扩展通用 AI 对话、协作或离线同步能力。
 
@@ -16,7 +16,7 @@
 - ORM：SQLAlchemy 2.x。
 - schema migration：Alembic。
 - 账号创建：仅通过后端 CLI，不提供公开注册接口或注册页面。
-- 登录：邮箱、密码与 JWT Bearer access token。
+- 登录：用户名、密码与 JWT Bearer access token。
 - 首项 AI 能力：自然语言生成结构化任务草稿，用户确认后才创建任务。
 
 ## 当前仓库状态
@@ -24,8 +24,8 @@
 ```text
 tickly/
 ├── apps/
-│   ├── web/                 # 基础 React/Vite 页面
-│   └── api/                 # FastAPI 工程基线与 SQLite 数据层
+│   ├── web/                 # React 登录、认证状态与受保护壳层
+│   └── api/                 # FastAPI、SQLite、CLI 与 JWT 认证
 ├── packages/                # 共享包预留目录
 ├── docs/
 ├── compose.yaml
@@ -36,14 +36,12 @@ tickly/
 
 当前尚未实现：
 
-- 认证和 Todo 业务 API。
-- CLI 账号与密码管理。
+- Todo 业务 API。
 - Todo 页面与业务交互。
-- Web 自动化测试框架。
 - AI 供应商集成。
 - VPS HTTPS、备份、恢复和完整发布流程。
 
-阶段 0 的工程与 Docker 骨架已建立；阶段 1 已具备 SQLAlchemy、SQLite、ORM 模型、Alembic migration 与数据库 readiness 检查。Docker 镜像和 Compose smoke 是否通过必须以当次 Docker daemon 验证结果为准。
+阶段 0 的工程与 Docker 骨架、阶段 1 的 SQLAlchemy/SQLite/Alembic 数据层和阶段 2 的用户名 + JWT 认证均已实现。Web 与 API 自动化测试已接入，Docker smoke 覆盖 migration、CLI 创建账号、登录 Cookie 与 `/me`；后续从阶段 3 Todo API 开始。
 
 ## 架构方案比较
 
@@ -180,10 +178,12 @@ ORM models + SQLite
 
 目标：完成个人多设备登录闭环。
 
+状态：已完成。
+
 范围：
 
 - CLI 创建账号、修改密码、停用账号和撤销全部会话。
-- 邮箱规范化并建立唯一约束。
+- 用户名规范化并建立唯一约束；不使用邮箱或显示名称。
 - 使用 Argon2 哈希密码。
 - 实现登录、刷新、登出和当前用户 API。
 - access token 为短期 JWT Bearer。
@@ -194,7 +194,7 @@ ORM models + SQLite
 验收：
 
 - 未登录请求不能访问业务 API。
-- 错误邮箱和错误密码返回相同信息。
+- 错误用户名和错误密码返回相同信息。
 - access token 过期后可通过 refresh token 自动恢复。
 - refresh token 每次使用后轮换。
 - 旧 refresh token 重放会撤销对应设备会话。
@@ -321,7 +321,7 @@ ORM models + SQLite
 | 字段 | 约束 |
 | --- | --- |
 | `id` | UUID，主键 |
-| `email` | 规范化邮箱，唯一、非空 |
+| `username` | 规范化用户名，3–32 位、唯一、非空 |
 | `password_hash` | Argon2 哈希，非空 |
 | `timezone` | IANA 时区，默认 `Asia/Shanghai` |
 | `is_active` | 布尔值，默认 true |
@@ -379,7 +379,7 @@ AI 草稿不建表。草稿只存在于当前响应和浏览器内存中。
 
 | 方法 | 路径 | 行为 |
 | --- | --- | --- |
-| `POST` | `/auth/login` | 校验邮箱密码，返回 access token 并设置 refresh Cookie |
+| `POST` | `/auth/login` | 校验用户名和密码，返回 access token 并设置 refresh Cookie |
 | `POST` | `/auth/refresh` | 轮换 refresh token 并返回新 access token |
 | `POST` | `/auth/logout` | 撤销当前设备会话并清除 Cookie |
 | `GET` | `/auth/me` | 返回当前用户信息 |
@@ -510,7 +510,7 @@ refresh JWT 额外包含 `sid`，并使用 `type=refresh`。解码时固定允�
 - 最少 12 个字符。
 - 不设置固定的大写、小写、数字、符号组合规则。
 - 使用 Argon2 推荐参数生成哈希。
-- 登录未知邮箱时执行 dummy hash，再返回统一错误。
+- 登录未知用户名时执行 dummy hash，再返回统一错误。
 - 日志不得记录明文密码或密码哈希。
 
 ### Token
@@ -637,7 +637,7 @@ refresh JWT 额外包含 `sid`，并使用 `type=refresh`。解码时固定允�
 6. AI 任务草稿。
 7. VPS Docker Compose、备份与恢复。
 
-下一份规格只覆盖第 1 项。每个阶段完成、验证并审阅后，再设计下一阶段。
+阶段 0–2 已完成。下一份规格只覆盖第 4 项 Todo API；每个阶段完成、验证并审阅后，再设计下一阶段。
 
 ## 文档依据
 

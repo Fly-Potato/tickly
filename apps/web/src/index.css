@@ -122,7 +122,10 @@
     @apply border-border outline-ring/50;
     }
   body {
-    @apply bg-background text-foreground;
+    @apply min-h-svh bg-background text-foreground antialiased;
+    background-image:
+      radial-gradient(circle at 12% 18%, oklch(0.72 0.16 250 / 0.12), transparent 28rem),
+      linear-gradient(oklch(0.98 0.006 250 / 0.78), oklch(1 0 0 / 0));
     }
   button:not(:disabled), [role="button"]:not(:disabled) {
     cursor: pointer;
@@ -130,4 +133,90 @@
   html {
     @apply font-sans;
     }
+}
+
+@layer components {
+  .auth-page {
+    @apply min-h-svh px-5 py-6 sm:px-8 sm:py-8;
+  }
+
+  .auth-layout {
+    @apply mx-auto grid min-h-[calc(100svh-3rem)] max-w-6xl overflow-hidden rounded-3xl border border-border/70 bg-card/80 shadow-[0_30px_90px_-45px_oklch(0.27_0.08_250/0.35)] backdrop-blur md:grid-cols-[1.05fr_0.95fr] sm:min-h-[calc(100svh-4rem)];
+  }
+
+  .auth-intro {
+    @apply relative hidden overflow-hidden bg-slate-950 p-12 text-white md:flex md:flex-col;
+  }
+
+  .auth-brand-row {
+    @apply flex items-center gap-3;
+  }
+
+  .auth-brand-mark {
+    @apply grid size-9 place-items-center rounded-xl bg-blue-600 text-sm font-bold text-white shadow-[0_8px_24px_-8px_oklch(0.62_0.21_255/0.9)];
+  }
+
+  .auth-brand-name {
+    @apply text-sm font-semibold tracking-[0.18em] uppercase;
+  }
+
+  .auth-dial {
+    @apply relative mt-auto mb-14 size-44 rounded-full border border-white/16;
+    background:
+      radial-gradient(circle, oklch(0.13 0.025 260) 0 66%, transparent 67%),
+      repeating-conic-gradient(
+        from -1deg,
+        transparent 0deg 28deg,
+        oklch(1 0 0 / 0.42) 28deg 30deg
+      );
+  }
+
+  .auth-dial::before,
+  .auth-dial::after {
+    content: "";
+    @apply absolute left-1/2 top-1/2 block origin-left rounded-full bg-blue-400;
+  }
+
+  .auth-dial::before {
+    width: 3.6rem;
+    height: 2px;
+    transform: rotate(-52deg);
+  }
+
+  .auth-dial::after {
+    width: 2.25rem;
+    height: 2px;
+    transform: rotate(18deg);
+  }
+
+  .auth-kicker,
+  .auth-card-index {
+    @apply font-mono text-[0.68rem] font-medium tracking-[0.18em] text-blue-500 uppercase;
+  }
+
+  .auth-statement {
+    @apply mt-4 max-w-sm text-4xl font-semibold leading-[1.12] tracking-[-0.04em];
+  }
+
+  .auth-card {
+    @apply flex flex-col justify-center px-7 py-12 sm:px-12 lg:px-16;
+  }
+
+  .auth-title {
+    @apply mt-4 text-3xl font-semibold tracking-[-0.035em] sm:text-4xl;
+  }
+
+  .auth-ready-card {
+    @apply mx-auto flex min-h-[calc(100svh-3rem)] max-w-3xl flex-col rounded-3xl border border-border/70 bg-card/85 p-8 shadow-[0_30px_90px_-45px_oklch(0.27_0.08_250/0.35)] backdrop-blur sm:min-h-[calc(100svh-4rem)] sm:p-12;
+  }
+
+  .auth-loading-mark {
+    @apply mx-auto size-11 animate-pulse rounded-2xl bg-blue-600 shadow-[0_12px_32px_-10px_oklch(0.62_0.21_255/0.9)];
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .auth-loading-mark {
+    animation: none;
+  }
 }

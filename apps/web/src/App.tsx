@@ -1,21 +1,22 @@
-import { Button } from "@/components/ui/button"
+import { AuthenticatedShell } from "@/features/auth/authenticated-shell"
+import { useAuth } from "@/features/auth/auth-context"
+import { LoginForm } from "@/features/auth/login-form"
 
 export function App() {
-  return (
-    <div className="flex min-h-svh p-6">
-      <div className="flex max-w-md min-w-0 flex-col gap-4 text-sm leading-loose">
-        <div>
-          <h1 className="font-medium">Project ready!</h1>
-          <p>You may now add components and start building.</p>
-          <p>We&apos;ve already added the button component for you.</p>
-          <Button className="mt-2">Button</Button>
+  const { state } = useAuth()
+
+  if (state.status === "initializing") {
+    return (
+      <main className="auth-page grid place-items-center">
+        <div role="status" className="text-center">
+          <div className="auth-loading-mark" aria-hidden="true" />
+          <p className="mt-5 text-sm text-muted-foreground">正在恢复登录状态</p>
         </div>
-        <div className="font-mono text-xs text-muted-foreground">
-          (Press <kbd>d</kbd> to toggle dark mode)
-        </div>
-      </div>
-    </div>
-  )
+      </main>
+    )
+  }
+
+  return state.status === "authenticated" ? <AuthenticatedShell /> : <LoginForm />
 }
 
 export default App

@@ -28,19 +28,37 @@ def test_models_expose_required_tables_and_task_indexes(tmp_path: Path) -> None:
     engine.dispose()
 
 
-def test_user_email_is_unique(tmp_path: Path) -> None:
+def test_username_is_unique(tmp_path: Path) -> None:
     engine, session_factory = make_session_factory(tmp_path)
     with session_factory() as session:
-        session.add_all([User(email="person@example.com", password_hash="hash"), User(email="person@example.com", password_hash="hash2")])
+        session.add_all(
+            [
+                User(username="person", password_hash="hash"),
+                User(username="person", password_hash="hash2"),
+            ]
+        )
         with pytest.raises(IntegrityError):
             session.commit()
+    engine.dispose()
+
+
+def test_username_constraints_reject_non_normalized_values(tmp_path: Path) -> None:
+    engine, session_factory = make_session_factory(tmp_path)
+    invalid_usernames = ["ab", "A_user", "has space", "中文名", "a" * 33]
+
+    for index, username in enumerate(invalid_usernames):
+        with session_factory() as session:
+            session.add(User(username=username, password_hash=f"hash-{index}"))
+            with pytest.raises(IntegrityError):
+                session.commit()
+
     engine.dispose()
 
 
 def test_deleting_user_cascades_auth_session_and_tasks(tmp_path: Path) -> None:
     engine, session_factory = make_session_factory(tmp_path)
     with session_factory() as session:
-        user = User(email="person@example.com", password_hash="hash")
+        user = User(username="person", password_hash="hash")
         user.auth_sessions.append(
             AuthSession(
                 refresh_token_hash="refresh-hash",
@@ -64,7 +82,7 @@ def test_deleting_user_cascades_auth_session_and_tasks(tmp_path: Path) -> None:
 def test_task_defaults_and_constraints(tmp_path: Path) -> None:
     engine, session_factory = make_session_factory(tmp_path)
     with session_factory() as session:
-        user = User(email="person@example.com", password_hash="hash")
+        user = User(username="person", password_hash="hash")
         session.add(user)
         session.flush()
         task = Task(user_id=user.id, title="Inbox item")
