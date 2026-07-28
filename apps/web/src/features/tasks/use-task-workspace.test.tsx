@@ -142,3 +142,157 @@ describe("Todo 工作区读取状态", () => {
     expect(result.current.state.selectedTaskId).toBeNull()
   })
 })
+
+describe("Todo 工作区 mutation", () => {
+  it("快速新增会规范标题、阻止重复请求并刷新当前 query", async () => {
+    const createdTask = makeTask("created", { title: "新任务" })
+    const creation = deferred<Task>()
+    tasks.listTasks
+      .mockResolvedValueOnce({ items: [], next_cursor: null })
+      .mockResolvedValueOnce({ items: [createdTask], next_cursor: null })
+    tasks.createTask.mockReturnValueOnce(creation.promise)
+    const { result } = renderHook(() => useTaskWorkspace())
+    await waitFor(() => expect(result.current.state.initialLoading).toBe(false))
+
+    let firstRequest!: Promise<void>
+    act(() => {
+      firstRequest = result.current.actions.create("  新任务  ")
+      void result.current.actions.create("重复请求")
+    })
+
+    expect(tasks.createTask).toHaveBeenCalledOnce()
+    expect(tasks.createTask).toHaveBeenCalledWith({ title: "新任务" })
+    expect(result.current.state.creating).toBe(true)
+    await act(async () => {
+      creation.resolve(createdTask)
+      await firstRequest
+    })
+    expect(tasks.listTasks).toHaveBeenCalledTimes(2)
+    expect(result.current.state.items).toEqual([createdTask])
+    expect(result.current.state.creating).toBe(false)
+  })
+
+  it("保存成功关闭选择并刷新，失败则保留选择", async () => {
+    const original = makeTask("editable")
+    const updated = { ...original, title: "已更新" }
+    tasks.listTasks
+      .mockResolvedValueOnce({ items: [original], next_cursor: null })
+      .mockResolvedValueOnce({ items: [updated], next_cursor: null })
+    tasks.updateTask.mockResolvedValueOnce(updated)
+    const { result } = renderHook(() => useTaskWorkspace())
+    await waitFor(() => expect(result.current.state.items).toEqual([original]))
+    act(() => result.current.actions.selectTask(original.id))
+
+    await act(async () => {
+      await result.current.actions.save(original.id, { title: "已更新" })
+    })
+
+    expect(tasks.updateTask).toHaveBeenCalledWith(original.id, {
+      title: "已更新",
+    })
+    expect(result.current.state.selectedTaskId).toBeNull()
+    expect(result.current.state.items).toEqual([updated])
+
+    act(() => result.current.actions.selectTask(updated.id))
+    tasks.updateTask.mockRejectedValueOnce(new Error("secret"))
+    await act(async () => {
+      await expect(
+        result.current.actions.save(updated.id, { notes: "保留表单" }),
+      ).rejects.toThrow()
+    })
+    expect(result.current.state.selectedTaskId).toBe(updated.id)
+    expect(result.current.state.saving).toBe(false)
+  })
+
+  it("完成失败会在同一 query 精确恢复原任务和位置", async () => {
+    const first = makeTask("first")
+    const target = makeTask("target")
+    const failure = deferred<Task>()
+    tasks.listTasks.mockResolvedValueOnce({
+      items: [first, target],
+      next_cursor: null,
+    })
+    tasks.listTasks.mockResolvedValueOnce({
+      items: [first, target],
+      next_cursor: null,
+    })
+    tasks.updateTask.mockReturnValueOnce(failure.promise)
+    const { result } = renderHook(() => useTaskWorkspace())
+    await waitFor(() =>
+      expect(result.current.state.items).toEqual([first, target]),
+    )
+    act(() => result.current.actions.setStatus("active"))
+    await waitFor(() => expect(result.current.state.initialLoading).toBe(false))
+
+    let request!: Promise<void>
+    act(() => {
+      request = result.current.actions.setCompleted(target, true)
+    })
+    expect(result.current.state.items).toEqual([first])
+    expect(result.current.state.completingTaskIds.has(target.id)).toBe(true)
+
+    await act(async () => {
+      failure.reject(new Error("网络中断"))
+      await expect(request).rejects.toThrow()
+    })
+    expect(result.current.state.items).toEqual([first, target])
+    expect(result.current.state.completionError).toBe("完成状态更新失败")
+    expect(result.current.state.completingTaskIds.has(target.id)).toBe(false)
+  })
+
+  it("query 已变化时完成失败不注入旧快照并重载新 query", async () => {
+    const target = makeTask("target")
+    const completed = makeTask("completed", { is_completed: true })
+    const failure = deferred<Task>()
+    tasks.listTasks
+      .mockResolvedValueOnce({ items: [target], next_cursor: null })
+      .mockResolvedValueOnce({ items: [completed], next_cursor: null })
+      .mockResolvedValueOnce({ items: [completed], next_cursor: null })
+    tasks.updateTask.mockReturnValueOnce(failure.promise)
+    const { result } = renderHook(() => useTaskWorkspace())
+    await waitFor(() => expect(result.current.state.items).toEqual([target]))
+
+    let request!: Promise<void>
+    act(() => {
+      request = result.current.actions.setCompleted(target, true)
+    })
+    act(() => result.current.actions.setStatus("completed"))
+    await waitFor(() => expect(result.current.state.items).toEqual([completed]))
+
+    await act(async () => {
+      failure.reject(new Error("网络中断"))
+      await expect(request).rejects.toThrow()
+    })
+    await waitFor(() => expect(tasks.listTasks).toHaveBeenCalledTimes(3))
+    expect(result.current.state.items).toEqual([completed])
+    expect(result.current.state.items).not.toContainEqual(target)
+    expect(tasks.listTasks).toHaveBeenLastCalledWith(
+      expect.objectContaining({ status: "completed" }),
+      expect.any(AbortSignal),
+    )
+  })
+
+  it("删除成功移除任务，删除失败保留编辑上下文", async () => {
+    const target = makeTask("target")
+    tasks.listTasks.mockResolvedValueOnce({
+      items: [target],
+      next_cursor: null,
+    })
+    tasks.deleteTask.mockResolvedValueOnce(undefined)
+    const { result } = renderHook(() => useTaskWorkspace())
+    await waitFor(() => expect(result.current.state.items).toEqual([target]))
+    act(() => result.current.actions.selectTask(target.id))
+
+    await act(async () => result.current.actions.remove(target.id))
+    expect(result.current.state.items).toEqual([])
+    expect(result.current.state.selectedTaskId).toBeNull()
+
+    act(() => result.current.actions.selectTask(target.id))
+    tasks.deleteTask.mockRejectedValueOnce(new Error("secret"))
+    await act(async () => {
+      await expect(result.current.actions.remove(target.id)).rejects.toThrow()
+    })
+    expect(result.current.state.selectedTaskId).toBe(target.id)
+    expect(result.current.state.deleting).toBe(false)
+  })
+})
