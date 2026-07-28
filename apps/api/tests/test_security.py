@@ -48,11 +48,11 @@ def test_password_hash_round_trip() -> None:
     assert not verify_password("wrong password", encoded)
 
 
-def test_password_requires_at_least_twelve_characters() -> None:
+def test_password_requires_at_least_six_characters() -> None:
     with pytest.raises(InvalidPassword):
-        validate_password("a" * 11)
+        validate_password("a" * 5)
 
-    assert validate_password("a" * 12) == "a" * 12
+    assert validate_password("a" * 6) == "a" * 6
 
 
 def test_dummy_password_verification_does_not_expose_a_result() -> None:

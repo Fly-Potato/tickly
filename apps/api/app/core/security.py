@@ -46,6 +46,7 @@ class TokenPayload(BaseModel):
 
 
 _USERNAME_PATTERN = re.compile(r"[a-z0-9_-]{3,32}")
+_MIN_PASSWORD_LENGTH = 6
 _PASSWORD_HASH = PasswordHash.recommended()
 # 未知用户仍执行一次同等成本的 Argon2 校验，缩小账号枚举的时间差异。
 _DUMMY_PASSWORD_HASH = _PASSWORD_HASH.hash("tickly-dummy-password-value")
@@ -63,8 +64,8 @@ def normalize_username(value: str) -> str:
 def validate_password(value: str) -> str:
     """执行密码进入散列前的最小长度校验，不改变用户输入。"""
 
-    if len(value) < 12:
-        raise InvalidPassword("密码至少需要 12 个字符")
+    if len(value) < _MIN_PASSWORD_LENGTH:
+        raise InvalidPassword(f"密码至少需要 {_MIN_PASSWORD_LENGTH} 个字符")
     return value
 
 

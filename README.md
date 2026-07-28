@@ -49,7 +49,7 @@ API 当前提供 `/health`、`/ready`、`/api/v1/auth/login`、`/api/v1/auth/ref
 
 ## 账号管理
 
-先完成 migration，然后从 `apps/api` 目录运行 CLI。密码只通过交互式 `getpass` 读取，不接受命令行明文参数：
+先完成 migration，然后从 `apps/api` 目录运行 CLI。密码最少 6 个字符，只通过交互式 `getpass` 读取，不接受命令行明文参数：
 
 ```bash
 mise exec -- uv run python -m app.cli user create --username potato
