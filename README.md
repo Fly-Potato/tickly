@@ -8,7 +8,7 @@ Tickly 是一个计划接入 AI 能力的个人多设备 Todo 应用 monorepo。
 - `docs/roadmaps`：0 到 1 产品与工程路线图
 - `docs/superpowers`：已确认的设计与实施计划
 
-Todo 领域、登录、数据库和 AI 行为尚未实现；当前阶段完成工程基线与容器部署骨架。
+Todo 业务、登录和 AI 能力尚未实现；当前已完成工程与容器基线，以及 SQLAlchemy、SQLite、ORM 模型、Alembic migration 和数据库 readiness 检查。
 
 数据库 schema 通过 Alembic 显式管理。API 本地默认使用 `apps/api/data/tickly.db`，首次运行前执行：
 
@@ -42,7 +42,7 @@ mise exec -- pnpm dev:api
 ```
 
 Vite 默认将 `/api` 代理到 `http://127.0.0.1:8000`，可通过 `VITE_API_PROXY_TARGET` 覆盖。
-API 当前提供 `/health`、`/ready` 以及 FastAPI 文档路由；`/ready` 仅在应用 lifespan 已启动时返回成功。
+API 当前提供 `/health`、`/ready` 以及 FastAPI 文档路由；`/ready` 仅在应用 lifespan 已启动、数据库可访问且数据库 revision 与代码中的 migration head 一致时返回成功。
 
 ## 检查
 
@@ -54,7 +54,7 @@ mise exec -- pnpm check
 
 ## Docker
 
-启动 Docker Desktop 后运行完整容器 smoke test：
+启动可用的 Docker daemon 后运行完整容器 smoke test。该入口由 Node.js 执行，可在 Windows、macOS 和 Linux 使用，不依赖 Bash：
 
 ```bash
 mise exec -- pnpm docker:smoke

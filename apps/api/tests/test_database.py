@@ -1,13 +1,16 @@
 from pathlib import Path
 from types import SimpleNamespace
 
-from sqlalchemy import text
+from alembic import command
+from alembic.config import Config
+from sqlalchemy import select, text
 
 from app.db.session import (
     create_engine_for_settings,
     create_session_factory,
     get_db_session,
 )
+from app.models import Task, User
 
 
 def make_settings(database_path: Path) -> SimpleNamespace:
@@ -47,3 +50,38 @@ def test_session_dependency_rolls_back_when_request_fails(tmp_path: Path) -> Non
 
     assert count == 0
     engine.dispose()
+
+
+def test_file_database_persists_after_engine_restart(tmp_path: Path) -> None:
+    database_path = tmp_path / "persistent.db"
+    alembic_config = Config("alembic.ini")
+    alembic_config.set_main_option("sqlalchemy.url", f"sqlite:///{database_path}")
+    command.upgrade(alembic_config, "head")
+
+    first_engine = create_engine_for_settings(make_settings(database_path))
+    first_session_factory = create_session_factory(first_engine)
+    with first_session_factory() as session:
+        user = User(email="persistent@example.com", password_hash="hash")
+        user.tasks.append(Task(title="跨重启保留的任务", priority="high"))
+        session.add(user)
+        session.commit()
+        user_id = user.id
+        task_id = user.tasks[0].id
+
+    # 释放并重新创建 Engine，模拟 API 进程重启后只依赖同一个 SQLite 文件恢复状态。
+    first_engine.dispose()
+    restarted_engine = create_engine_for_settings(make_settings(database_path))
+    restarted_session_factory = create_session_factory(restarted_engine)
+
+    with restarted_session_factory() as session:
+        persisted_user = session.scalar(select(User).where(User.id == user_id))
+        persisted_task = session.scalar(select(Task).where(Task.id == task_id))
+
+        assert persisted_user is not None
+        assert persisted_user.email == "persistent@example.com"
+        assert persisted_task is not None
+        assert persisted_task.user_id == user_id
+        assert persisted_task.title == "跨重启保留的任务"
+        assert persisted_task.priority == "high"
+
+    restarted_engine.dispose()
