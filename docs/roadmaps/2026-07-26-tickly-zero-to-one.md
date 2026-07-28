@@ -25,9 +25,10 @@
 tickly/
 ├── apps/
 │   ├── web/                 # 基础 React/Vite 页面
-│   └── api/                 # FastAPI，仅有 GET /health
+│   └── api/                 # FastAPI 工程基线与 SQLite 数据层
 ├── packages/                # 共享包预留目录
-├── docs/superpowers/
+├── docs/
+├── compose.yaml
 ├── package.json
 ├── pnpm-workspace.yaml
 └── mise.toml
@@ -35,15 +36,14 @@ tickly/
 
 当前尚未实现：
 
-- 领域模型和业务 API。
-- 数据库、ORM 与 migration。
-- 用户、密码和登录会话。
+- 认证和 Todo 业务 API。
+- CLI 账号与密码管理。
 - Todo 页面与业务交互。
 - Web 自动化测试框架。
 - AI 供应商集成。
-- Docker 镜像、Compose、备份和部署流程。
+- VPS HTTPS、备份、恢复和完整发布流程。
 
-现有 Web lint 在 `apps/web/src/components/ui/button.tsx` 上存在 `react-refresh/only-export-components` 基线错误。阶段 0 必须先修复，使后续验收建立在全绿基线上。
+阶段 0 的工程与 Docker 骨架已建立；阶段 1 已具备 SQLAlchemy、SQLite、ORM 模型、Alembic migration 与数据库 readiness 检查。Docker 镜像和 Compose smoke 是否通过必须以当次 Docker daemon 验证结果为准。
 
 ## 架构方案比较
 

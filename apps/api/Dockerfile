@@ -17,9 +17,12 @@ ENV PATH="/app/.venv/bin:${PATH}" \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1
 
+# 固定运行身份并预置数据库目录，确保镜像和新 volume 都能由非 root 进程写入。
 RUN groupadd --system --gid 10001 tickly \
     && useradd --system --uid 10001 --gid tickly \
-        --home-dir /app --shell /usr/sbin/nologin tickly
+        --home-dir /app --shell /usr/sbin/nologin tickly \
+    && mkdir --parents /data \
+    && chown tickly:tickly /data
 
 WORKDIR /app
 

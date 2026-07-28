@@ -7,7 +7,7 @@ Tickly 是一个计划接入 AI 能力的类 Todo List 项目，采用 monorepo 
 当前状态：
 
 - `apps/web` 是主要应用，目前仍是基础 React 页面，Todo 业务尚未实现。
-- `apps/api` 是 FastAPI 骨架，提供 `/health`、生命周期感知的 `/ready`、请求 ID、统一错误和结构化日志；Todo/登录/ORM 尚未实现。
+- `apps/api` 已具备 FastAPI 应用工厂、`/health`、数据库与 migration 感知的 `/ready`、请求 ID、统一错误、结构化日志、SQLAlchemy/SQLite 数据层和首份 Alembic migration；Todo 与登录流程尚未实现。
 - AI 功能尚未实现；不要把规划能力描述成现有能力。
 
 实现新功能前先确认当前任务属于 Web、API 还是真正需要跨应用复用的代码，不为可能出现的需求提前扩展架构。

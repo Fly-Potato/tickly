@@ -4,16 +4,20 @@ services:
       context: .
       dockerfile: apps/api/Dockerfile
     environment:
+      TICKLY_DATABASE_URL: sqlite:////data/tickly.db
       TICKLY_ENVIRONMENT: production
       TICKLY_LOG_JSON: "true"
     expose:
       - "8000"
+    volumes:
+      - tickly-data:/data
     healthcheck:
       test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=2)"]
       interval: 2s
       timeout: 3s
       retries: 15
       start_period: 5s
+
   web:
     build:
       context: .
@@ -29,3 +33,6 @@ services:
       timeout: 3s
       retries: 15
       start_period: 5s
+
+volumes:
+  tickly-data:
