@@ -43,7 +43,7 @@
 - Consumes: 现有 `Settings` 的 `TICKLY_` 前缀和 `.env` 加载规则。
 - Produces: `Settings.host: IPvAnyAddress`、`Settings.port: int`，供 `app.server` 读取。
 
-- [ ] **Step 1: 写入默认值与环境覆盖的失败测试**
+- [x] **Step 1: 写入默认值与环境覆盖的失败测试**
 
 在 `test_default_settings_are_for_local_development` 中加入：
 
@@ -81,7 +81,7 @@ def test_invalid_listener_settings_are_rejected(field: str, value: object) -> No
         Settings(**{field: value}, _env_file=None)
 ```
 
-- [ ] **Step 2: 运行测试并确认因字段不存在而失败**
+- [x] **Step 2: 运行测试并确认因字段不存在而失败**
 
 Run:
 
@@ -91,7 +91,7 @@ UV_CACHE_DIR=/tmp/tickly-uv-cache mise exec -- pnpm test:api -- tests/test_confi
 
 Expected: FAIL；默认值测试报告 `Settings` 没有 `host` 或 `port` 属性，非法值测试因未知字段被忽略而没有抛出 `ValidationError`。
 
-- [ ] **Step 3: 实现最小监听字段和范围类型**
+- [x] **Step 3: 实现最小监听字段和范围类型**
 
 在 `apps/api/app/core/config.py` 调整导入并声明类型：
 
@@ -111,7 +111,7 @@ host: IPvAnyAddress = IPv4Address("127.0.0.1")
 port: Port = 8000
 ```
 
-- [ ] **Step 4: 运行目标测试并确认默认值、覆盖和非法值全部通过**
+- [x] **Step 4: 运行目标测试并确认默认值、覆盖和非法值全部通过**
 
 Run:
 
@@ -121,7 +121,7 @@ UV_CACHE_DIR=/tmp/tickly-uv-cache mise exec -- pnpm test:api -- tests/test_confi
 
 Expected: PASS。`IPvAnyAddress` 拒绝主机名和 CIDR，`Port` 拒绝范围外整数。
 
-- [ ] **Step 5: 提交 Settings 改动**
+- [x] **Step 5: 提交 Settings 改动**
 
 ```bash
 git add apps/api/app/core/config.py apps/api/tests/test_config.py
@@ -139,7 +139,7 @@ git commit -m "feat(api): 增加监听参数配置"
 - Consumes: `Settings.host`、`Settings.port`。
 - Produces: `main(argv: Sequence[str] | None = None) -> None`；支持可选 `--reload`，并调用 `uvicorn.run("app.main:app", host=..., port=..., reload=...)`。
 
-- [ ] **Step 1: 写入服务器参数传递的失败测试**
+- [x] **Step 1: 写入服务器参数传递的失败测试**
 
 创建 `apps/api/tests/test_server.py`：
 
@@ -180,7 +180,7 @@ def test_server_passes_listener_settings_to_uvicorn(
     }
 ```
 
-- [ ] **Step 2: 运行测试并确认模块缺失导致失败**
+- [x] **Step 2: 运行测试并确认模块缺失导致失败**
 
 Run:
 
@@ -190,7 +190,7 @@ UV_CACHE_DIR=/tmp/tickly-uv-cache mise exec -- pnpm test:api -- tests/test_serve
 
 Expected: FAIL with `ModuleNotFoundError: No module named 'app.server'`，异常发生在测试函数内部。
 
-- [ ] **Step 3: 实现最小服务器入口**
+- [x] **Step 3: 实现最小服务器入口**
 
 创建 `apps/api/app/server.py`：
 
@@ -229,7 +229,7 @@ if __name__ == "__main__":
     main()
 ```
 
-- [ ] **Step 4: 运行服务器入口测试并确认通过**
+- [x] **Step 4: 运行服务器入口测试并确认通过**
 
 Run:
 
@@ -239,7 +239,7 @@ UV_CACHE_DIR=/tmp/tickly-uv-cache mise exec -- pnpm test:api -- tests/test_serve
 
 Expected: `2 passed`。
 
-- [ ] **Step 5: 切换本地开发脚本并验证参数解析**
+- [x] **Step 5: 切换本地开发脚本并验证参数解析**
 
 把根 `package.json` 中的脚本改为：
 
@@ -255,7 +255,7 @@ UV_CACHE_DIR=/tmp/tickly-uv-cache mise exec -- pnpm dev:api -- --help
 
 Expected: 退出码为 `0`，帮助信息包含 `--reload`，且不会启动网络服务。
 
-- [ ] **Step 6: 提交统一启动入口**
+- [x] **Step 6: 提交统一启动入口**
 
 ```bash
 git add apps/api/app/server.py apps/api/tests/test_server.py package.json
@@ -274,7 +274,7 @@ git commit -m "feat(api): 统一开发与生产启动入口"
 - Consumes: `python -m app.server`、Compose 插值 `${TICKLY_HOST:-0.0.0.0}` 和 `${TICKLY_PORT:-8000}`。
 - Produces: API、健康检查和 Caddy 共用的容器内端口；smoke test 固定注入非默认端口 `18080`。
 
-- [ ] **Step 1: 先让 smoke test 要求非默认 API 端口**
+- [x] **Step 1: 先让 smoke test 要求非默认 API 端口**
 
 在 `scripts/docker-smoke.mjs` 常量区加入并注入：
 
@@ -317,7 +317,7 @@ UV_CACHE_DIR=/tmp/tickly-uv-cache mise exec -- pnpm docker:smoke
 
 Expected: FAIL，API 容器没有 `TICKLY_PORT=18080`。若 Docker daemon 不可用，保留失败证据，并在 daemon 可用后补跑这一红灯步骤。
 
-- [ ] **Step 3: 切换 Dockerfile 到统一入口**
+- [x] **Step 3: 切换 Dockerfile 到统一入口**
 
 把固定 `EXPOSE` 和 FastAPI CLI `CMD` 替换为：
 
@@ -325,7 +325,7 @@ Expected: FAIL，API 容器没有 `TICKLY_PORT=18080`。若 Docker daemon 不可
 CMD ["python", "-m", "app.server"]
 ```
 
-- [ ] **Step 4: 在 Compose 中统一注入并消费监听配置**
+- [x] **Step 4: 在 Compose 中统一注入并消费监听配置**
 
 在 `api.environment` 中加入：
 
@@ -355,7 +355,7 @@ environment:
   TICKLY_API_PORT: ${TICKLY_PORT:-8000}
 ```
 
-- [ ] **Step 5: 让 Caddy 使用 Compose 注入的 API 端口**
+- [x] **Step 5: 让 Caddy 使用 Compose 注入的 API 端口**
 
 把上游改为：
 
@@ -365,7 +365,7 @@ reverse_proxy api:{$TICKLY_API_PORT}
 
 Caddyfile 的 `{$ENV}` 会在配置解析前展开；这里不为变量另设默认值，因为 Compose 始终注入 `TICKLY_API_PORT`。
 
-- [ ] **Step 6: 验证 Compose 解析结果包含非默认端口**
+- [x] **Step 6: 验证 Compose 解析结果包含非默认端口**
 
 Run:
 
@@ -385,7 +385,7 @@ UV_CACHE_DIR=/tmp/tickly-uv-cache mise exec -- pnpm docker:smoke
 
 Expected: PASS with `Docker smoke test passed`。API 容器不发布宿主机端口，Web 仍通过 `127.0.0.1:8080` 接受 smoke 请求。
 
-- [ ] **Step 8: 提交容器联动改动**
+- [x] **Step 8: 提交容器联动改动**
 
 ```bash
 git add apps/api/Dockerfile compose.yaml apps/web/Caddyfile scripts/docker-smoke.mjs
@@ -403,7 +403,7 @@ git commit -m "feat(docker): 支持配置 API 内部端口"
 - Consumes: Task 1 与 Task 3 确认的变量名和默认值。
 - Produces: 本地开发和 Compose 用户可直接复制的配置示例。
 
-- [ ] **Step 1: 更新本地 API 环境示例**
+- [x] **Step 1: 更新本地 API 环境示例**
 
 在 `apps/api/.env.example` 的日志配置后加入：
 
@@ -412,7 +412,7 @@ TICKLY_HOST=127.0.0.1
 TICKLY_PORT=8000
 ```
 
-- [ ] **Step 2: 更新根 Compose 环境示例**
+- [x] **Step 2: 更新根 Compose 环境示例**
 
 在根 `.env.example` 加入：
 
@@ -422,7 +422,7 @@ TICKLY_HOST=0.0.0.0
 TICKLY_PORT=8000
 ```
 
-- [ ] **Step 3: 更新 README 的本地开发说明**
+- [x] **Step 3: 更新 README 的本地开发说明**
 
 在本地开发命令后说明：
 
@@ -432,7 +432,7 @@ API 默认监听 `127.0.0.1:8000`。可在 `apps/api/.env` 中设置
 `VITE_API_PROXY_TARGET`，例如 `http://127.0.0.1:9000`。
 ```
 
-- [ ] **Step 4: 更新 README 的 Docker 说明**
+- [x] **Step 4: 更新 README 的 Docker 说明**
 
 在 Docker 段落补充：
 
@@ -443,7 +443,7 @@ Compose 可通过根 `.env` 中的 `TICKLY_HOST`、`TICKLY_PORT` 调整 API
 直接发布到宿主机。
 ```
 
-- [ ] **Step 5: 检查文档事实和 Markdown**
+- [x] **Step 5: 检查文档事实和 Markdown**
 
 Run:
 
@@ -454,7 +454,7 @@ git diff --check
 
 Expected: 两个变量在对应示例与 README 中均有说明，`git diff --check` 退出码为 `0`。
 
-- [ ] **Step 6: 提交文档改动**
+- [x] **Step 6: 提交文档改动**
 
 ```bash
 git add apps/api/.env.example .env.example README.md
@@ -474,7 +474,7 @@ git commit -m "docs: 说明 API 监听配置"
 - Consumes: Task 1 至 Task 4 的全部交付。
 - Produces: API 测试、Compose 解析和真实容器闭环的最终证据。
 
-- [ ] **Step 1: 运行完整 API 测试**
+- [x] **Step 1: 运行完整 API 测试**
 
 Run:
 
@@ -484,7 +484,7 @@ UV_CACHE_DIR=/tmp/tickly-uv-cache mise exec -- pnpm test:api
 
 Expected: 全部 pytest 测试通过，退出码为 `0`。
 
-- [ ] **Step 2: 验证默认 Compose 配置可解析**
+- [x] **Step 2: 验证默认 Compose 配置可解析**
 
 Run:
 
@@ -504,7 +504,7 @@ UV_CACHE_DIR=/tmp/tickly-uv-cache mise exec -- pnpm docker:smoke
 
 Expected: 输出 `Docker smoke test passed`，退出码为 `0`。
 
-- [ ] **Step 4: 检查最终差异与工作区状态**
+- [x] **Step 4: 检查最终差异与工作区状态**
 
 Run:
 
@@ -524,3 +524,9 @@ Expected: `git diff --check` 无输出；状态只包含实施计划勾选产生
 git add docs/superpowers/plans/2026-08-10-configurable-api-listener.md
 git commit -m "docs: 记录 API 监听配置实施结果"
 ```
+
+## 本次执行记录
+
+- API 测试：`157 passed, 1 warning`。
+- Compose 默认配置解析：通过；非默认 `TICKLY_PORT=18080` 的配置解析：通过。
+- Docker smoke：未完成；本机 Docker daemon 未运行，连接 `unix:///Users/dengrui/.docker/run/docker.sock` 失败。相关 smoke 复跑步骤保持未勾选。
