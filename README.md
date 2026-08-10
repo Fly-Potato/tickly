@@ -43,6 +43,9 @@ mise exec -- pnpm dev:api
 ```
 
 Vite 默认将 `/api` 代理到 `http://127.0.0.1:8000`，可通过 `VITE_API_PROXY_TARGET` 覆盖。
+API 默认监听 `127.0.0.1:8000`。可在 `apps/api/.env` 中设置 `TICKLY_HOST` 和
+`TICKLY_PORT` 覆盖；端口变化后，应同步调整 `VITE_API_PROXY_TARGET`，例如
+`http://127.0.0.1:9000`。
 API 当前提供以下业务路由以及 `/health`、`/ready` 和 FastAPI 文档路由：
 
 - `/api/v1/auth/login`
@@ -87,4 +90,7 @@ mise exec -- pnpm docker:smoke
 
 常用命令：`pnpm docker:build`、`pnpm docker:up`、`pnpm docker:down`。
 Compose 只发布 Web 的 `8080` 端口，API 通过内部网络由 Caddy 代理；两个运行容器均使用非 root 用户。
+Compose 可通过根 `.env` 中的 `TICKLY_HOST`、`TICKLY_PORT` 调整 API 容器的内部监听参数，
+健康检查和 Caddy 上游端口会同步变化。容器监听地址通常应保持 `0.0.0.0`；Web 对宿主机
+发布的端口仍为 `8080`，API 端口不会直接发布到宿主机。
 生产 Compose 强制要求 `TICKLY_JWT_SECRET`，且密钥至少 32 个字符。复制根 `.env.example` 为 `.env` 后必须替换示例值；不要复用开发默认密钥或提交 `.env`。`docker:smoke` 会为一次性 Compose project 在进程内生成随机密钥和密码，并验证真实账号创建与登录流程。
