@@ -14,6 +14,8 @@ def test_default_settings_are_for_local_development() -> None:
     assert settings.log_json is False
     assert settings.request_id_header == "X-Request-ID"
     assert settings.database_url == "sqlite:///./data/tickly.db"
+    assert str(settings.host) == "127.0.0.1"
+    assert settings.port == 8000
 
 
 def test_database_url_can_be_overridden_by_environment(
@@ -24,6 +26,18 @@ def test_database_url_can_be_overridden_by_environment(
     settings = Settings(_env_file=None)
 
     assert settings.database_url == "sqlite:////data/tickly.db"
+
+
+def test_listener_can_be_overridden_by_environment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("TICKLY_HOST", "::")
+    monkeypatch.setenv("TICKLY_PORT", "9000")
+
+    settings = Settings(_env_file=None)
+
+    assert str(settings.host) == "::"
+    assert settings.port == 9000
 
 
 def test_authentication_defaults_are_explicit() -> None:
@@ -86,6 +100,20 @@ def test_invalid_environment_is_rejected(value: str) -> None:
 def test_invalid_log_level_is_rejected() -> None:
     with pytest.raises(ValidationError):
         Settings(log_level="TRACE", _env_file=None)
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("host", "localhost"),
+        ("host", "127.0.0.1/24"),
+        ("port", 0),
+        ("port", 65536),
+    ],
+)
+def test_invalid_listener_settings_are_rejected(field: str, value: object) -> None:
+    with pytest.raises(ValidationError):
+        Settings(**{field: value}, _env_file=None)
 
 
 @pytest.mark.parametrize("value", ["api/v1", "/api/v1/", "/"])

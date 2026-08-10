@@ -1,14 +1,16 @@
+from ipaddress import IPv4Address
 from enum import StrEnum
 from pathlib import Path
-from typing import Literal
+from typing import Annotated, Literal
 
-from pydantic import PositiveInt, field_validator, model_validator
+from pydantic import Field, IPvAnyAddress, PositiveInt, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 API_ROOT = Path(__file__).resolve().parents[2]
 LogLevel = Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
 DEFAULT_DEVELOPMENT_JWT_SECRET = "development-only-change-me"
+Port = Annotated[int, Field(ge=1, le=65535)]
 
 
 class Environment(StrEnum):
@@ -31,6 +33,9 @@ class Settings(BaseSettings):
     api_v1_prefix: str = "/api/v1"
     log_level: LogLevel = "INFO"
     log_json: bool = False
+    # 监听配置在启动服务器前校验，避免容器或本地进程以隐式默认值绑定错误地址。
+    host: IPvAnyAddress = IPv4Address("127.0.0.1")
+    port: Port = 8000
     request_id_header: str = "X-Request-ID"
     database_url: str = "sqlite:///./data/tickly.db"
     jwt_secret: str = DEFAULT_DEVELOPMENT_JWT_SECRET
