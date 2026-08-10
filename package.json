@@ -9,7 +9,7 @@
     "format": "pnpm --filter @tickly/web format",
     "typecheck": "pnpm --filter @tickly/web typecheck",
     "preview": "pnpm --filter @tickly/web preview",
-    "dev:api": "cd apps/api && uv run fastapi dev app/main.py",
+    "dev:api": "cd apps/api && uv run python -m app.server --reload",
     "test:web": "pnpm --filter @tickly/web test",
     "test:api": "cd apps/api && uv run pytest",
     "check": "pnpm lint && pnpm typecheck && pnpm build && pnpm test:web && pnpm test:api",
