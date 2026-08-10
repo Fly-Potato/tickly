@@ -6,15 +6,17 @@ services:
     environment:
       TICKLY_DATABASE_URL: sqlite:////data/tickly.db
       TICKLY_ENVIRONMENT: production
+      TICKLY_HOST: ${TICKLY_HOST:-0.0.0.0}
+      TICKLY_PORT: ${TICKLY_PORT:-8000}
       TICKLY_JWT_SECRET: ${TICKLY_JWT_SECRET:?TICKLY_JWT_SECRET is required}
       TICKLY_LOG_JSON: "true"
       TICKLY_REFRESH_COOKIE_SECURE: ${TICKLY_REFRESH_COOKIE_SECURE:-true}
     expose:
-      - "8000"
+      - "${TICKLY_PORT:-8000}"
     volumes:
       - tickly-data:/data
     healthcheck:
-      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=2)"]
+      test: [CMD, python, -c, "import os, urllib.request; urllib.request.urlopen('http://127.0.0.1:{}/health'.format(os.environ['TICKLY_PORT']), timeout=2)"]
       interval: 2s
       timeout: 3s
       retries: 15
@@ -27,6 +29,8 @@ services:
     depends_on:
       api:
         condition: service_healthy
+    environment:
+      TICKLY_API_PORT: ${TICKLY_PORT:-8000}
     ports:
       - "8080:8080"
     healthcheck:

@@ -6,10 +6,13 @@ const projectName = `tickly-smoke-${process.pid}`
 const repositoryRoot = process.cwd()
 const smokeUsername = "smoke-user"
 const smokePassword = randomBytes(24).toString("base64url")
+const apiPort = "18080"
 
 // 只向本次 smoke 的 Compose 子进程注入一次性生产配置，不写入文件或日志。
 process.env.TICKLY_JWT_SECRET = randomBytes(32).toString("hex")
 process.env.TICKLY_REFRESH_COOKIE_SECURE = "true"
+// 使用非默认端口验证 API、健康检查和 Caddy 上游共享同一份配置。
+process.env.TICKLY_PORT = apiPort
 
 function run(
   command,
@@ -170,6 +173,18 @@ async function assertNonRoot(container, service) {
   }
 }
 
+async function assertContainerEnvironment(container, name, expectedValue) {
+  const result = await run(
+    "docker",
+    ["inspect", "--format", "{{range .Config.Env}}{{println .}}{{end}}", container],
+    { capture: true },
+  )
+  const entries = result.stdout.split("\n")
+  if (!entries.includes(`${name}=${expectedValue}`)) {
+    throw new Error(`API 容器未使用 ${name}=${expectedValue}`)
+  }
+}
+
 let cleanupPromise
 
 function cleanup() {
@@ -207,6 +222,7 @@ async function main() {
 
   const apiContainer = await waitForHealthy("api")
   const webContainer = await waitForHealthy("web")
+  await assertContainerEnvironment(apiContainer, "TICKLY_PORT", apiPort)
 
   const html = await requestText("http://127.0.0.1:8080/")
   if (!html.includes('id="root"')) {

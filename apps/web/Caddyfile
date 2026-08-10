@@ -3,7 +3,7 @@
 
 	@api path /api/* /health /ready
 	handle @api {
-		reverse_proxy api:8000
+		reverse_proxy api:{$TICKLY_API_PORT}
 	}
 
 	handle {
