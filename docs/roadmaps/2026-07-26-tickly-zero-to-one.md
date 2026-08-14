@@ -40,7 +40,7 @@ tickly/
 - AI 供应商集成。
 - VPS HTTPS、备份、恢复和完整发布流程。
 
-阶段 0–4 已实现，已具备工程与 Docker 骨架、SQLAlchemy/SQLite/Alembic 数据层、用户名 + JWT 认证、受用户所有权保护的 Todo API，以及支持响应式 CRUD、筛选、排序、cursor 分页和账号时区的 Todo Web。Web 与 API 自动化测试已接入，Docker smoke 覆盖 migration、CLI 创建账号、登录 Cookie 与 `/me`；后续从阶段 5 自然语言任务草稿开始。
+阶段 0–4 已实现，已具备工程与 Docker 骨架、SQLAlchemy/SQLite/Alembic 数据层、用户名 + JWT 认证、受用户所有权保护的 Todo API，以及支持响应式 CRUD、筛选、排序、cursor 分页和账号时区的 Todo Web。Web 与 API 自动化测试已接入；后续从阶段 5 自然语言任务草稿开始。
 
 ## 架构方案比较
 
@@ -140,7 +140,6 @@ ORM models + SQLite
 - 创建 API Dockerfile。
 - 增加 `.dockerignore`，排除 Git、依赖目录、虚拟环境、缓存、构建产物和密钥。
 - 容器使用非 root 用户运行。
-- 建立最小 Docker Compose 冒烟验证。
 
 验收：
 

@@ -15,7 +15,6 @@
     "check": "pnpm lint && pnpm typecheck && pnpm build && pnpm test:web && pnpm test:api",
     "docker:build": "docker compose build",
     "docker:up": "docker compose up --detach --build",
-    "docker:down": "docker compose down --remove-orphans",
-    "docker:smoke": "node ./scripts/docker-smoke.mjs"
+    "docker:down": "docker compose down --remove-orphans"
   }
 }

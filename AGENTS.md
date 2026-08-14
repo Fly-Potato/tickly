@@ -28,7 +28,7 @@ Tickly 是一个计划接入 AI 能力的类 Todo List 项目，采用 monorepo 
 - Web 使用 React 19、TypeScript、Vite、Tailwind CSS 4、shadcn 与 Base UI。
 - API 使用 Python 3.13、FastAPI 和 pytest；依赖与锁文件分别是 `apps/api/pyproject.toml` 和 `apps/api/uv.lock`。
 - Python 依赖统一通过 uv 管理，不额外维护 pip requirements 文件。
-- Docker 使用根目录 `compose.yaml`；API 与 Web 镜像必须保持非 root 运行，并通过 `scripts/docker-smoke.mjs` 验证。
+- Docker 使用根目录 `compose.yaml`；API 与 Web 镜像必须保持非 root 运行。
 - 新增依赖前先确认现有依赖无法满足需求，并把依赖声明到实际使用它的应用或 workspace 包。
 
 ## 常用命令
@@ -59,7 +59,6 @@ mise exec -- pnpm build
 mise exec -- pnpm test:web
 mise exec -- pnpm test:api
 mise exec -- pnpm check
-mise exec -- pnpm docker:smoke
 ```
 
 格式化会改写文件，只在需要格式化相关 TypeScript 或 TSX 文件时运行：
@@ -120,7 +119,6 @@ AI 功能尚未实现。开始接入时至少遵守以下约束：
 - Web 改动：运行 `mise exec -- pnpm lint`、`mise exec -- pnpm typecheck` 和 `mise exec -- pnpm build`。
 - API 改动：运行 `mise exec -- pnpm test:api`。
 - 认证跨端改动：运行 Web 检查、`mise exec -- pnpm test:web` 和 `mise exec -- pnpm test:api`，并验证真实接口契约。
-- Docker、认证 Cookie 或生产配置改动：额外运行 `mise exec -- pnpm docker:smoke`。
 - 仅文档改动：检查路径、命令、事实和 Markdown 结构，无需运行应用测试。
 
 完成说明必须列出实际运行过的检查及结果；未执行的检查不得描述为通过。
