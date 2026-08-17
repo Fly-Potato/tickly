@@ -3,7 +3,7 @@
   "private": true,
   "packageManager": "pnpm@11.16.0",
   "scripts": {
-    "dev": "pnpm --filter @tickly/web dev",
+    "dev:web": "pnpm --filter @tickly/web dev",
     "build": "pnpm --filter @tickly/web build",
     "lint": "pnpm --filter @tickly/web lint",
     "format": "pnpm --filter @tickly/web format",

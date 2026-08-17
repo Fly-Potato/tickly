@@ -38,7 +38,7 @@ mise exec -- uv sync --project apps/api --locked
 ## 本地开发
 
 ```bash
-mise exec -- pnpm dev
+mise exec -- pnpm dev:web
 mise exec -- pnpm dev:api
 ```
 
