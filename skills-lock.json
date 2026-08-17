@@ -1,6 +1,12 @@
 {
   "version": 1,
   "skills": {
+    "curating-repository-knowledge": {
+      "source": "Fly-Potato/agent-skills",
+      "sourceType": "github",
+      "skillPath": "skills/curating-repository-knowledge/SKILL.md",
+      "computedHash": "06de43b95e4bd061350426f95f4642c491f1e08ae05651684b76715c37ef5370"
+    },
     "fastapi": {
       "source": "fastapi/fastapi",
       "sourceType": "github",
