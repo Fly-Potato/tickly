@@ -35,7 +35,7 @@ class Settings(BaseSettings):
     log_json: bool = False
     # 监听配置在启动服务器前校验，避免容器或本地进程以隐式默认值绑定错误地址。
     host: IPvAnyAddress = IPv4Address("127.0.0.1")
-    port: Port = 8000
+    port: Port = 8321
     request_id_header: str = "X-Request-ID"
     database_url: str = "sqlite:///./data/tickly.db"
     jwt_secret: str = DEFAULT_DEVELOPMENT_JWT_SECRET

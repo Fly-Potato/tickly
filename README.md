@@ -10,18 +10,17 @@ Tickly 是一个计划接入 AI 能力的个人多设备 Todo 应用 monorepo。
 
 当前已完成工程与容器基线、SQLAlchemy/SQLite 持久化、单账号用户名 + JWT 认证闭环、受当前用户所有权保护的 Todo API，以及响应式 Todo Web。Web 支持快速新增、筛选、排序、cursor 加载更多、编辑、完成回滚、删除确认和账号 IANA 时区；AI 能力尚未实现。账号只能通过后端 CLI 创建和维护。
 
-数据库 schema 通过 Alembic 显式管理。API 本地默认使用 `apps/api/data/tickly.db`，首次运行前执行：
+数据库 schema 通过 Alembic 显式管理。API 本地默认使用 `apps/api/data/tickly.db`，首次运行前从仓库根目录执行：
 
 ```bash
-cd apps/api
-mise exec -- uv run alembic upgrade head
-mise exec -- uv run alembic current
+mise exec -- uv --directory apps/api run alembic upgrade head
+mise exec -- uv --directory apps/api run alembic current
 ```
 
 回退本地 schema：
 
 ```bash
-mise exec -- uv run alembic downgrade base
+mise exec -- uv --directory apps/api run alembic downgrade base
 ```
 
 应用启动不会自动创建或修改生产数据库 schema。
@@ -42,8 +41,8 @@ mise exec -- pnpm dev:web
 mise exec -- pnpm dev:api
 ```
 
-Vite 默认将 `/api` 代理到 `http://127.0.0.1:8000`，可通过 `VITE_API_PROXY_TARGET` 覆盖。
-API 默认监听 `127.0.0.1:8000`。可在 `apps/api/.env` 中设置 `TICKLY_HOST` 和
+Vite 默认将 `/api` 代理到 `http://127.0.0.1:8321`，可通过 `VITE_API_PROXY_TARGET` 覆盖。
+API 默认监听 `127.0.0.1:8321`。可在 `apps/api/.env` 中设置 `TICKLY_HOST` 和
 `TICKLY_PORT` 覆盖；端口变化后，应同步调整 `VITE_API_PROXY_TARGET`，例如
 `http://127.0.0.1:9000`。
 API 当前提供以下业务路由以及 `/health`、`/ready` 和 FastAPI 文档路由：
@@ -61,13 +60,13 @@ API 当前提供以下业务路由以及 `/health`、`/ready` 和 FastAPI 文档
 
 ## 账号管理
 
-先完成 migration，然后从 `apps/api` 目录运行 CLI。密码最少 6 个字符，只通过交互式 `getpass` 读取，不接受命令行明文参数：
+先完成 migration，然后从仓库根目录运行 CLI。密码最少 6 个字符，只通过交互式 `getpass` 读取，不接受命令行明文参数：
 
 ```bash
-mise exec -- uv run python -m app.cli user create --username potato
-mise exec -- uv run python -m app.cli user change-password --username potato
-mise exec -- uv run python -m app.cli user deactivate --username potato
-mise exec -- uv run python -m app.cli user revoke-sessions --username potato
+mise exec -- uv --directory apps/api run python -m app.cli user create --username potato
+mise exec -- uv --directory apps/api run python -m app.cli user change-password --username potato
+mise exec -- uv --directory apps/api run python -m app.cli user deactivate --username potato
+mise exec -- uv --directory apps/api run python -m app.cli user revoke-sessions --username potato
 ```
 
 第一版只允许一个账号，不提供公开注册、邮箱登录、账号重新激活或找回密码。access token 有效期默认 15 分钟且只保存在 Web 内存；refresh token 使用固定 30 天绝对期限，只写入 HttpOnly Cookie，数据库仅保存 SHA-256 摘要。
@@ -78,11 +77,11 @@ mise exec -- uv run python -m app.cli user revoke-sessions --username potato
 mise exec -- pnpm check
 ```
 
-也可分别运行 `pnpm lint`、`pnpm typecheck`、`pnpm build`、`pnpm test:web` 和 `pnpm test:api`。
+也可分别运行 `mise exec -- pnpm lint`、`mise exec -- pnpm typecheck`、`mise exec -- pnpm build`、`mise exec -- pnpm test:web` 和 `mise exec -- pnpm test:api`。
 
 ## Docker
 
-常用命令：`pnpm docker:build`、`pnpm docker:up`、`pnpm docker:down`。
+常用命令：`mise exec -- pnpm docker:build`、`mise exec -- pnpm docker:up`、`mise exec -- pnpm docker:down`。
 Compose 只发布 Web 的 `8080` 端口，API 通过内部网络由 Caddy 代理；两个运行容器均使用非 root 用户。
 Compose 可通过根 `.env` 中的 `TICKLY_HOST`、`TICKLY_PORT` 调整 API 容器的内部监听参数，
 健康检查和 Caddy 上游端口会同步变化。容器监听地址通常应保持 `0.0.0.0`；Web 对宿主机

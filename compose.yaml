@@ -7,12 +7,12 @@ services:
       TICKLY_DATABASE_URL: sqlite:////data/tickly.db
       TICKLY_ENVIRONMENT: production
       TICKLY_HOST: ${TICKLY_HOST:-0.0.0.0}
-      TICKLY_PORT: ${TICKLY_PORT:-8000}
+      TICKLY_PORT: ${TICKLY_PORT:-8321}
       TICKLY_JWT_SECRET: ${TICKLY_JWT_SECRET:?TICKLY_JWT_SECRET is required}
       TICKLY_LOG_JSON: "true"
       TICKLY_REFRESH_COOKIE_SECURE: ${TICKLY_REFRESH_COOKIE_SECURE:-true}
     expose:
-      - "${TICKLY_PORT:-8000}"
+      - "${TICKLY_PORT:-8321}"
     volumes:
       - tickly-data:/data
     healthcheck:
@@ -30,7 +30,7 @@ services:
       api:
         condition: service_healthy
     environment:
-      TICKLY_API_PORT: ${TICKLY_PORT:-8000}
+      TICKLY_API_PORT: ${TICKLY_PORT:-8321}
     ports:
       - "8080:8080"
     healthcheck:

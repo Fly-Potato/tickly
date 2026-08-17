@@ -15,7 +15,7 @@ def test_default_settings_are_for_local_development() -> None:
     assert settings.request_id_header == "X-Request-ID"
     assert settings.database_url == "sqlite:///./data/tickly.db"
     assert str(settings.host) == "127.0.0.1"
-    assert settings.port == 8000
+    assert settings.port == 8321
 
 
 def test_database_url_can_be_overridden_by_environment(
