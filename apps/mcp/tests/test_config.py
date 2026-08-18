@@ -47,6 +47,11 @@ def test_production_requires_token_hash_and_transport_allowlists() -> None:
         ("allowed_hosts", "*.example.com"),
         ("allowed_hosts", "tickly.example.com/path"),
         ("allowed_hosts", "tickly.example.com:"),
+        ("allowed_hosts", "tickly.example.com?"),
+        ("allowed_hosts", "tickly.example.com#"),
+        ("allowed_hosts", "tickly.\rexample.com"),
+        ("allowed_hosts", "tickly.\nexample.com"),
+        ("allowed_hosts", "tickly.\texample.com"),
         ("allowed_origins", ""),
         ("allowed_origins", "   "),
         ("allowed_origins", "tickly.example.com"),
@@ -54,6 +59,11 @@ def test_production_requires_token_hash_and_transport_allowlists() -> None:
         ("allowed_origins", "https://tickly.example.com/path"),
         ("allowed_origins", "https://user@tickly.example.com"),
         ("allowed_origins", "https://tickly.example.com:"),
+        ("allowed_origins", "https://tickly.example.com?"),
+        ("allowed_origins", "https://tickly.example.com#"),
+        ("allowed_origins", "https://tickly.\rexample.com"),
+        ("allowed_origins", "https://tickly.\nexample.com"),
+        ("allowed_origins", "https://tickly.\texample.com"),
     ],
 )
 def test_transport_allowlists_reject_invalid_entries(field: str, value: str) -> None:

@@ -40,6 +40,13 @@ def _validate_host_allowlist_entry(value: str) -> None:
     """校验 SDK 支持的精确 Host 与尾部端口通配模式。"""
     if not value or value != value.strip():
         raise ValueError("allowed_hosts 项不得为空或包含首尾空白")
+    # urlsplit 会静默删除部分控制字符和空分隔符，必须在解析前按原值拒绝。
+    if (
+        "?" in value
+        or "#" in value
+        or any(ord(character) < 32 or ord(character) == 127 for character in value)
+    ):
+        raise ValueError("allowed_hosts 项不得包含 ASCII 控制字符、? 或 #")
 
     wildcard_port = value.endswith(":*")
     authority = value[:-2] if wildcard_port else value
@@ -70,6 +77,13 @@ def _validate_origin_allowlist_entry(value: str) -> None:
     """校验 SDK 支持的精确 HTTP(S) Origin 与尾部端口通配模式。"""
     if not value or value != value.strip():
         raise ValueError("allowed_origins 项不得为空或包含首尾空白")
+    # Origin 同样必须先校验原值，避免解析规范化掩盖危险输入。
+    if (
+        "?" in value
+        or "#" in value
+        or any(ord(character) < 32 or ord(character) == 127 for character in value)
+    ):
+        raise ValueError("allowed_origins 项不得包含 ASCII 控制字符、? 或 #")
 
     wildcard_port = value.endswith(":*")
     origin = value[:-2] if wildcard_port else value
