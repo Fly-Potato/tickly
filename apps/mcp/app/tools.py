@@ -50,7 +50,10 @@ def _header(headers: Mapping[str, str], name: str) -> str | None:
     return None
 
 
-def request_security_context(context: Context[Any]) -> tuple[str, str]:
+def request_security_context(
+    context: Context[Any],
+    request_id_header: str = "X-Request-ID",
+) -> tuple[str, str]:
     """从入口已验证并规范化的请求头取得明文凭据与 request ID。
 
     该函数不是独立认证器：Bearer 哈希校验由外层中间件完成。这里仍对缺失、
@@ -60,7 +63,7 @@ def request_security_context(context: Context[Any]) -> tuple[str, str]:
     if headers is None:
         raise McpToolError(*_AUTHENTICATION_ERROR) from None
     token = token_from_authorization(_header(headers, "Authorization"))
-    request_id = _header(headers, "X-Request-ID")
+    request_id = _header(headers, request_id_header)
     if (
         token is None
         or request_id is None

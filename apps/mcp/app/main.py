@@ -3,6 +3,7 @@
 from collections.abc import AsyncIterator, Callable
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from dataclasses import dataclass
+from functools import partial
 
 import httpx
 from mcp.server import MCPServer
@@ -115,7 +116,7 @@ def create_mcp_server(
     settings: Settings,
     *,
     api_client_override: TicklyApiClient | None = None,
-    security_context_provider: SecurityContextProvider = request_security_context,
+    security_context_provider: SecurityContextProvider | None = None,
 ) -> MCPServer[AppContext]:
     """创建官方 SDK v2 MCPServer，并绑定 Tickly 单一上游生命周期。"""
     lifecycle_state = LifecycleState()
@@ -133,7 +134,11 @@ def create_mcp_server(
         ),
     )
     register_health_routes(server, settings, lifecycle_state)
-    register_tools(server, security_context_provider)
+    resolved_security_context_provider = security_context_provider or partial(
+        request_security_context,
+        request_id_header=settings.request_id_header,
+    )
+    register_tools(server, resolved_security_context_provider)
     return server
 
 

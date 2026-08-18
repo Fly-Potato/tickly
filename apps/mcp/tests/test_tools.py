@@ -1,16 +1,19 @@
 """Tickly MCP 只读工具的协议、转发与安全边界测试。"""
 
 from datetime import UTC, datetime
+import hashlib
 from importlib import import_module
 from types import SimpleNamespace
 from typing import Any
 
+import httpx2
 import pytest
 from mcp.client import Client
+from mcp.client.streamable_http import streamable_http_client
 
 from app.config import Environment, Settings
 from app.errors import McpToolError
-from app.main import create_mcp_server
+from app.main import create_http_app, create_mcp_server
 from app.schemas import (
     ParentOptionPagePayload,
     TaskDetailPayload,
@@ -357,3 +360,53 @@ async def test_read_tool_propagates_stable_error_without_raw_token() -> None:
     assert "upstream_unavailable" in error_text
     assert "Tickly API 暂时不可用" in error_text
     assert TOKEN not in error_text
+
+
+@pytest.mark.asyncio
+async def test_streamable_http_forwards_configured_request_id_header() -> None:
+    """真实 HTTP 协议调用必须沿用入口配置的 request ID header。"""
+    fake = FakeApiClient()
+    token_digest = hashlib.sha256(TOKEN.encode("utf-8")).hexdigest()
+    settings = Settings(
+        environment=Environment.TEST,
+        token_sha256=token_digest,
+        request_id_header="X-Correlation-ID",
+        allowed_hosts=["testserver"],
+        allowed_origins=["https://codex.example"],
+        api_base_url="http://api:8321",
+        _env_file=None,
+    )
+    application = create_http_app(settings, api_client_override=fake)  # type: ignore[arg-type]
+    protocol_app = application.app.app  # type: ignore[attr-defined]
+    transport = httpx2.ASGITransport(app=application)
+
+    # ASGITransport 不驱动 lifespan；显式进入真实 SDK Starlette 应用生命周期，
+    # 让工具从与生产一致的 AppContext 取得覆盖注入的上游 client。
+    async with protocol_app.router.lifespan_context(protocol_app):
+        async with httpx2.AsyncClient(
+            transport=transport,
+            base_url="http://testserver",
+            headers={
+                "Authorization": f"Bearer {TOKEN}",
+                "X-Correlation-ID": "correlation-request-1",
+            },
+        ) as http:
+            client_transport = streamable_http_client(
+                "http://testserver/mcp",
+                http_client=http,
+                terminate_on_close=False,
+            )
+            async with Client(client_transport) as client:
+                result = await client.call_tool("list_topics", {})
+
+    assert result.is_error is False
+    assert result.structured_content == {
+        "summary": "已读取 2 个主题",
+        "items": ["工作", "个人"],
+    }
+    assert fake.calls == [
+        (
+            "list_topics",
+            {"token": TOKEN, "request_id": "correlation-request-1"},
+        )
+    ]
