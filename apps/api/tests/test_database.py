@@ -100,7 +100,17 @@ def test_file_database_persists_after_engine_restart(tmp_path: Path) -> None:
     first_session_factory = create_session_factory(first_engine)
     with first_session_factory() as session:
         user = User(username="persistent", password_hash="hash")
-        user.tasks.append(Task(title="跨重启保留的任务", priority="high"))
+        task_title = "跨重启保留的任务"
+        user.tasks.append(
+            Task(
+                serial=1,
+                title=task_title,
+                description=task_title,
+                topic="Tickly",
+                priority="high",
+                status="new",
+            )
+        )
         session.add(user)
         session.commit()
         user_id = user.id

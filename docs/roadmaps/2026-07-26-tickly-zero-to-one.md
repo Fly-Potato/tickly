@@ -24,7 +24,7 @@
 ```text
 tickly/
 ├── apps/
-│   ├── web/                 # React 登录、认证状态与受保护壳层
+│   ├── web/                 # React 认证与响应式两栏 Todo 工作区
 │   └── api/                 # FastAPI、SQLite、认证与 Todo API
 ├── packages/                # 共享包预留目录
 ├── docs/
@@ -36,11 +36,10 @@ tickly/
 
 当前尚未实现：
 
-- Todo 页面与业务交互。
 - AI 供应商集成。
 - VPS HTTPS、备份、恢复和完整发布流程。
 
-阶段 0–4 已实现，已具备工程与 Docker 骨架、SQLAlchemy/SQLite/Alembic 数据层、用户名 + JWT 认证、受用户所有权保护的 Todo API，以及支持响应式 CRUD、筛选、排序、cursor 分页和账号时区的 Todo Web。Web 与 API 自动化测试已接入；后续从阶段 5 自然语言任务草稿开始。
+阶段 0–4 已实现，已具备工程与 Docker 骨架、SQLAlchemy/SQLite/Alembic 数据层、用户名 + JWT 认证、受用户所有权保护的 Todo API，以及响应式 Todo Web。Todo 已支持账号内流水编号、三状态、必填主题、可选截止时间和一层父子待办；桌面端为左筛选、右列表两栏布局，移动端通过筛选 Dialog 使用同等查询能力。Web 与 API 自动化测试已接入；AI 功能尚未实现，后续从阶段 5 自然语言任务草稿开始。
 
 ## 架构方案比较
 
@@ -205,10 +204,12 @@ ORM models + SQLite
 
 范围：
 
-- 创建、列表、详情、修改、完成和删除任务。
-- 支持 All、Active 和 Completed 筛选。
-- 支持按创建时间、截止时间和优先级排序。
+- 创建、列表、详情、修改和删除任务，并支持 New、In Progress 与 Completed 三状态流转。
+- 支持 All、New、In Progress 和 Completed 状态筛选，以及主题筛选。
+- 支持按流水编号、创建时间、截止时间和优先级排序。
 - 使用稳定 cursor 分页。
+- 提供当前用户的主题列表与根待办父级候选。
+- 支持一层父子待办，不扩展为多层树或项目管理。
 - 所有查询绑定当前 `user_id`。
 - 建立请求校验、统一错误码和事务测试。
 
@@ -216,7 +217,7 @@ ORM models + SQLite
 
 - 用户只能访问自己的任务。
 - 不存在和不属于当前用户的任务统一返回 `404`。
-- 无效标题、时间、优先级、cursor 和状态返回稳定错误。
+- 无效标题、描述、主题、时间、优先级、父子关系、cursor 和状态返回稳定错误。
 - CRUD、筛选、排序、分页、回滚与用户隔离全部有 API 测试。
 
 ### 阶段 4：Todo Web
@@ -227,13 +228,13 @@ ORM models + SQLite
 
 - 登录后的任务首页。
 - 快速新增任务。
-- 任务列表、筛选与排序。
-- 标题和备注编辑。
-- 完成与取消完成。
+- 桌面端使用左筛选、右列表两栏布局，移动端使用筛选 Dialog。
+- 任务列表、主题与状态筛选、排序、账号内流水编号与一层父子展示。
+- 标题、描述、必填自由文本主题、状态、可选截止时间、优先级和父待办编辑。
 - 删除确认。
 - 截止时间、优先级与用户时区。
 - 加载、空数据、错误、重试和禁用状态。
-- 完成切换使用乐观更新，失败时回滚。
+- 三状态切换使用乐观更新，失败时回滚。
 - 扩展现有 Vitest 4、jsdom 测试，覆盖任务交互。
 
 验收：
@@ -321,6 +322,7 @@ ORM models + SQLite
 | `password_hash` | Argon2 哈希，非空 |
 | `timezone` | IANA 时区，默认 `Asia/Shanghai` |
 | `is_active` | 布尔值，默认 true |
+| `next_task_serial` | 下一个账号内任务流水号，非空、默认 1；创建任务时原子递增并将递增前的值分配给新任务 |
 | `created_at` | UTC 时间，非空 |
 | `updated_at` | UTC 时间，非空 |
 
@@ -348,18 +350,23 @@ ORM models + SQLite
 | --- | --- |
 | `id` | UUID，主键 |
 | `user_id` | 外键至 `users.id`，级联删除 |
+| `serial` | 账号内正整数流水编号，与 `user_id` 联合唯一 |
 | `title` | 1–200 字符，非空 |
-| `notes` | 最多 4000 字符，可空 |
-| `is_completed` | 布尔值，默认 false |
-| `priority` | `none`、`low`、`medium`、`high` |
+| `description` | 1–4000 字符，非空；创建时未提供则使用标题 |
+| `priority` | 可空；非空时为 `low`、`medium` 或 `high` |
+| `topic` | 1–100 字符的自由文本，非空 |
+| `status` | `new`、`in_progress` 或 `completed`，默认 `new` |
 | `due_at` | UTC 时间，可空 |
 | `completed_at` | UTC 时间，可空 |
+| `parent_id` | 同账号根待办外键，可空；仅允许一层父子关系 |
 | `created_at` | UTC 时间，非空 |
 | `updated_at` | UTC 时间，非空 |
 
 索引：
 
-- `(user_id, is_completed)`
+- `(user_id, status)`
+- `(user_id, topic)`
+- `(user_id, parent_id)`
 - `(user_id, due_at)`
 - `(user_id, created_at)`
 
@@ -400,14 +407,17 @@ refresh JWT 额外包含 `sid`，并使用 `type=refresh`。解码时固定允�
 | --- | --- | --- |
 | `GET` | `/tasks` | 按当前用户筛选、排序与分页 |
 | `POST` | `/tasks` | 创建任务 |
+| `GET` | `/tasks/topics` | 列出当前用户的任务主题 |
+| `GET` | `/tasks/parent-options` | 分页搜索当前用户的根待办父级候选 |
 | `GET` | `/tasks/{task_id}` | 获取任务详情 |
 | `PATCH` | `/tasks/{task_id}` | 部分更新任务 |
 | `DELETE` | `/tasks/{task_id}` | 删除任务 |
 
 任务列表支持：
 
-- `status=all|active|completed`
-- `sort=created_at|due_at|priority`
+- `status=all|new|in_progress|completed`
+- `topic=<完整主题>`
+- `sort=serial|created_at|due_at|priority`
 - `order=asc|desc`
 - `cursor=<opaque value>`
 - `limit`，默认 50，最大 100
@@ -429,8 +439,9 @@ refresh JWT 额外包含 `sid`，并使用 `type=refresh`。解码时固定允�
 响应只允许：
 
 - `title`
-- `notes`
+- `description`
 - `priority`
+- `topic`，必填
 - `due_at`
 
 该接口不接受或返回 `user_id`，也不写入数据库。
@@ -614,7 +625,7 @@ refresh JWT 额外包含 `sid`，并使用 `type=refresh`。解码时固定允�
 
 - 公开注册、邀请注册或找回密码邮件。
 - 团队、任务共享、角色或权限后台。
-- 标签、项目、子任务、附件或评论。
+- 标签、项目管理、多层任务树、附件或评论。
 - 离线编辑、客户端数据库或同步冲突合并。
 - 多 API 副本。
 - PostgreSQL。

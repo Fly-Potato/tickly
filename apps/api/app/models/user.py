@@ -36,6 +36,9 @@ class User(Base):
     password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
     timezone: Mapped[str] = mapped_column(String(64), nullable=False, default="Asia/Shanghai")
     is_active: Mapped[bool] = mapped_column(nullable=False, default=True)
+    next_task_serial: Mapped[int] = mapped_column(
+        nullable=False, default=1, server_default="1"
+    )
     created_at: Mapped[datetime] = mapped_column(nullable=False, default=utc_now)
     updated_at: Mapped[datetime] = mapped_column(nullable=False, default=utc_now, onupdate=utc_now)
 

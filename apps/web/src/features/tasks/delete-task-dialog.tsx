@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button"
 
 type DeleteTaskDialogProps = {
   taskTitle: string
+  childCount: number
   open: boolean
   deleting: boolean
   onOpenChange(open: boolean): void
@@ -12,6 +13,7 @@ type DeleteTaskDialogProps = {
 
 export function DeleteTaskDialog({
   taskTitle,
+  childCount,
   open,
   deleting,
   onOpenChange,
@@ -31,12 +33,15 @@ export function DeleteTaskDialog({
       <Dialog.Portal>
         <Dialog.Backdrop className="task-delete-backdrop fixed inset-0 z-50 bg-slate-950/45 backdrop-blur-[2px]" />
         <Dialog.Viewport className="fixed inset-0 z-50 grid place-items-center p-5">
-          <Dialog.Popup className="w-full max-w-md rounded-2xl border border-border bg-card p-6 text-card-foreground shadow-2xl outline-none">
+          <Dialog.Popup className="task-dialog-popup w-full max-w-md rounded-2xl border border-border bg-card p-6 text-card-foreground shadow-2xl outline-none">
             <Dialog.Title className="text-xl font-semibold tracking-tight">
               删除任务？
             </Dialog.Title>
             <Dialog.Description className="mt-3 text-sm leading-6 text-muted-foreground">
               “{taskTitle}”将被永久删除，此操作无法撤销。
+              {childCount > 0
+                ? ` ${childCount} 个子待办不会被删除，将成为顶层待办。`
+                : ""}
             </Dialog.Description>
             <div className="mt-7 flex justify-end gap-3">
               <Button

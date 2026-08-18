@@ -8,7 +8,7 @@ Tickly 是一个计划接入 AI 能力的个人多设备 Todo 应用 monorepo。
 - `docs/roadmaps`：0 到 1 产品与工程路线图
 - `docs/superpowers`：已确认的设计与实施计划
 
-当前已完成工程与容器基线、SQLAlchemy/SQLite 持久化、单账号用户名 + JWT 认证闭环、受当前用户所有权保护的 Todo API，以及响应式 Todo Web。Web 支持快速新增、筛选、排序、cursor 加载更多、编辑、完成回滚、删除确认和账号 IANA 时区；AI 能力尚未实现。账号只能通过后端 CLI 创建和维护。
+当前已完成工程与容器基线、SQLAlchemy/SQLite 持久化、单账号用户名 + JWT 认证闭环、受当前用户所有权保护的 Todo API，以及响应式 Todo Web。Todo 支持账号内流水编号 `serial`、New / In Progress / Completed 三种状态、必填的自由文本主题、可选截止时间和一层父子待办。Web 支持快速新增、编辑、删除确认、筛选、排序、cursor 加载更多和账号 IANA 时区；桌面端为左侧筛选、右侧列表的两栏布局，移动端通过 Dialog 抽屉打开筛选。AI 能力尚未实现。账号只能通过后端 CLI 创建和维护。
 
 数据库 schema 通过 Alembic 显式管理。API 本地默认使用 `apps/api/data/tickly.db`，首次运行前从仓库根目录执行：
 
@@ -52,9 +52,11 @@ API 当前提供以下业务路由以及 `/health`、`/ready` 和 FastAPI 文档
 - `/api/v1/auth/logout`
 - `/api/v1/auth/me`
 - `/api/v1/tasks`
+- `/api/v1/tasks/topics`
+- `/api/v1/tasks/parent-options`
 - `/api/v1/tasks/{task_id}`
 
-任务 API 支持 CRUD、完成/取消完成、状态筛选、排序和稳定 cursor 分页。`/ready` 仅在应用 lifespan 已启动、数据库可访问且数据库 revision 与代码中的 migration head 一致时返回成功。
+任务 API 支持 CRUD、三种状态流转、主题与状态筛选、排序、稳定 cursor 分页、主题列表和父待办候选。`/ready` 仅在应用 lifespan 已启动、数据库可访问且数据库 revision 与代码中的 migration head 一致时返回成功。
 
 本地 API 开发可复制 `apps/api/.env.example`；其中 JWT 密钥仅用于开发。用户名会先去除首尾空白并转为小写，只允许 3–32 位小写字母、数字、下划线和连字符。
 

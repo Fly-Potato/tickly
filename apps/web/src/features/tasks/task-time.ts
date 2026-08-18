@@ -53,7 +53,7 @@ function dateKey(utcIso: string, timeZone: string): string {
 export function formatDueLabel(
   dueAt: string,
   timeZone: string,
-  now = new Date(),
+  now = new Date()
 ): string {
   const formatter = new Intl.DateTimeFormat("zh-CN", {
     timeZone,
@@ -70,4 +70,35 @@ export function formatDueLabel(
         ? "今天"
         : "截止"
   return `${prefix} · ${formatter.format(new Date(dueAt))}`
+}
+
+const taskTimestampFormatters = new Map<string, Intl.DateTimeFormat>()
+
+function getTaskTimestampFormatter(timeZone: string): Intl.DateTimeFormat {
+  const cached = taskTimestampFormatters.get(timeZone)
+  if (cached !== undefined) {
+    return cached
+  }
+  const formatter = new Intl.DateTimeFormat("zh-CN", {
+    timeZone,
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  })
+  taskTimestampFormatters.set(timeZone, formatter)
+  return formatter
+}
+
+export function formatTaskTimestamp(
+  value: string,
+  timeZone: string,
+  label: "创建" | "完成"
+): string {
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) {
+    throw new TaskTimeError("任务时间格式无效")
+  }
+  return `${label} · ${getTaskTimestampFormatter(timeZone).format(date)}`
 }

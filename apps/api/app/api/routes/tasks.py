@@ -12,25 +12,35 @@ from fastapi import APIRouter, Query, status
 from app.api.dependencies import CurrentUser, DbSession
 from app.core.errors import AppError
 from app.schemas.tasks import (
+    ParentOptionPageResponse,
+    ParentOptionQuery,
+    ParentOptionResponse,
     TaskCreateRequest,
+    TaskDetailResponse,
+    TaskGroupResponse,
     TaskListQuery,
     TaskListResponse,
     TaskResponse,
     TaskUpdateRequest,
+    TopicListResponse,
 )
 from app.services.tasks import (
     InvalidCursor,
+    InvalidTaskRelationship,
     TaskNotFound,
     create_task,
     delete_task,
-    get_task,
+    get_task_detail,
+    list_parent_options,
     list_tasks,
+    list_topics,
     update_task,
 )
 
 
 router = APIRouter(prefix="/tasks", tags=["tasks"])
 TaskQuery = Annotated[TaskListQuery, Query()]
+ParentQuery = Annotated[ParentOptionQuery, Query()]
 
 
 @router.post("", response_model=TaskResponse, status_code=status.HTTP_201_CREATED)
@@ -39,7 +49,10 @@ def create(
     session: DbSession,
     user: CurrentUser,
 ) -> TaskResponse:
-    task = create_task(session, user.id, payload)
+    try:
+        task = create_task(session, user.id, payload)
+    except InvalidTaskRelationship as error:
+        raise _invalid_task_relationship() from error
     return TaskResponse.model_validate(task)
 
 
@@ -54,18 +67,53 @@ def list_all(
     except InvalidCursor as error:
         raise _invalid_cursor() from error
     return TaskListResponse(
-        items=[TaskResponse.model_validate(task) for task in page.items],
+        items=[
+            TaskGroupResponse(
+                task=TaskResponse.model_validate(group.task),
+                children=[
+                    TaskResponse.model_validate(child) for child in group.children
+                ],
+                child_count=group.child_count,
+                completed_child_count=group.completed_child_count,
+                context_only=group.context_only,
+            )
+            for group in page.items
+        ],
         next_cursor=page.next_cursor,
     )
 
 
-@router.get("/{task_id}", response_model=TaskResponse)
-def detail(task_id: str, session: DbSession, user: CurrentUser) -> TaskResponse:
+@router.get("/topics", response_model=TopicListResponse)
+def topics(session: DbSession, user: CurrentUser) -> TopicListResponse:
+    return TopicListResponse(items=list_topics(session, user.id))
+
+
+@router.get("/parent-options", response_model=ParentOptionPageResponse)
+def parent_options(
+    query: ParentQuery,
+    session: DbSession,
+    user: CurrentUser,
+) -> ParentOptionPageResponse:
     try:
-        task = get_task(session, user.id, task_id)
+        page = list_parent_options(session, user.id, query)
+    except InvalidCursor as error:
+        raise _invalid_cursor() from error
+    return ParentOptionPageResponse(
+        items=[ParentOptionResponse.model_validate(task) for task in page.items],
+        next_cursor=page.next_cursor,
+    )
+
+
+@router.get("/{task_id}", response_model=TaskDetailResponse)
+def detail(task_id: str, session: DbSession, user: CurrentUser) -> TaskDetailResponse:
+    try:
+        result = get_task_detail(session, user.id, task_id)
     except TaskNotFound as error:
         raise _task_not_found() from error
-    return TaskResponse.model_validate(task)
+    return TaskDetailResponse(
+        **TaskResponse.model_validate(result.task).model_dump(),
+        children=[TaskResponse.model_validate(child) for child in result.children],
+    )
 
 
 @router.patch("/{task_id}", response_model=TaskResponse)
@@ -79,6 +127,8 @@ def update(
         task = update_task(session, user.id, task_id, payload)
     except TaskNotFound as error:
         raise _task_not_found() from error
+    except InvalidTaskRelationship as error:
+        raise _invalid_task_relationship() from error
     return TaskResponse.model_validate(task)
 
 
@@ -105,4 +155,13 @@ def _invalid_cursor() -> AppError:
         status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
         code="invalid_cursor",
         message="分页游标无效",
+    )
+
+
+def _invalid_task_relationship() -> AppError:
+    # 所有父级校验失败共享同一响应，避免泄漏目标是否存在、归属或层级。
+    return AppError(
+        status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+        code="invalid_task_relationship",
+        message="父待办关系无效",
     )
