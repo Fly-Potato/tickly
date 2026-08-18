@@ -1,8 +1,11 @@
 :8080 {
 	encode zstd gzip
 
+	# 内部 API 永不对外暴露；handle 保证命中后不会继续落入 SPA fallback。
 	@internal path /internal/*
-	respond @internal 404
+	handle @internal {
+		respond 404
+	}
 
 	@mcp path /mcp /mcp/*
 	handle @mcp {

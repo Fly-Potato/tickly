@@ -35,4 +35,22 @@ if ($config.services.web.depends_on.mcp.condition -ne "service_healthy") {
     throw "Web 必须等待 MCP healthy"
 }
 
+# 内部 API 必须加入 Caddy 的 handle 互斥链，并在无 matcher 的 SPA fallback 前终止请求。
+$caddyfile = Get-Content -Raw (Join-Path $PSScriptRoot "../apps/web/Caddyfile")
+$internalMatcherIndex = $caddyfile.IndexOf("@internal path /internal/*")
+$internalHandle = [regex]::Match(
+    $caddyfile,
+    '(?ms)^\s*handle @internal\s*\{\s*respond 404\s*\}'
+)
+$spaFallback = [regex]::Match($caddyfile, '(?m)^\s*handle\s*\{\s*$')
+if (
+    $internalMatcherIndex -lt 0 -or
+    -not $internalHandle.Success -or
+    -not $spaFallback.Success -or
+    $internalMatcherIndex -ge $internalHandle.Index -or
+    $internalHandle.Index -ge $spaFallback.Index
+) {
+    throw "Caddy 必须在 SPA fallback 前用 handle @internal 固定阻断内部 API"
+}
+
 Write-Output "Compose MCP 边界检查通过"
