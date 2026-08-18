@@ -1,12 +1,20 @@
-"""Tickly 内部 API 响应在 MCP 边界上的严格镜像。"""
+"""Tickly 内部 API 响应与 MCP 只读工具的严格协议模型。"""
 
-from typing import Literal
+from typing import Annotated, Literal
 
-from pydantic import AwareDatetime, BaseModel, ConfigDict
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field
 
 
 TaskPriority = Literal["low", "medium", "high"]
 TaskStatusValue = Literal["new", "in_progress", "completed"]
+TaskStatusFilter = Literal["all", "new", "in_progress", "completed"]
+TaskSort = Literal["serial", "created_at", "due_at", "priority"]
+SortOrder = Literal["asc", "desc"]
+TaskSerial = Annotated[int, Field(ge=1, le=9_223_372_036_854_775_807)]
+TopicFilter = Annotated[str | None, Field(max_length=100)]
+Cursor = Annotated[str | None, Field(min_length=1, max_length=2048)]
+PageLimit = Annotated[int, Field(ge=1, le=100)]
+ParentQuery = Annotated[str | None, Field(max_length=200)]
 
 
 class ApiPayload(BaseModel):
@@ -60,5 +68,36 @@ class ParentOptionPayload(ApiPayload):
 
 
 class ParentOptionPagePayload(ApiPayload):
+    items: list[ParentOptionPayload]
+    next_cursor: str | None
+
+
+class TaskListResult(BaseModel):
+    """根任务组分页结果，并保留给 Codex 展示的短摘要。"""
+
+    summary: str
+    items: list[TaskGroupPayload]
+    next_cursor: str | None
+
+
+class TaskDetailResult(BaseModel):
+    """按流水号返回任务本体和一层直接子任务。"""
+
+    summary: str
+    task: TaskPayload
+    children: list[TaskPayload]
+
+
+class TopicListResult(BaseModel):
+    """当前账号精确主题值与短摘要。"""
+
+    summary: str
+    items: list[str]
+
+
+class ParentOptionResult(BaseModel):
+    """可作为父任务的根任务候选分页结果。"""
+
+    summary: str
     items: list[ParentOptionPayload]
     next_cursor: str | None

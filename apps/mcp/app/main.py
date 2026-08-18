@@ -14,6 +14,11 @@ from starlette.types import ASGIApp
 from app.api_client import TicklyApiClient
 from app.config import Settings
 from app.middleware import RequestIdMiddleware, StaticBearerMiddleware
+from app.tools import (
+    SecurityContextProvider,
+    register_tools,
+    request_security_context,
+)
 
 
 INSTRUCTIONS = (
@@ -110,6 +115,7 @@ def create_mcp_server(
     settings: Settings,
     *,
     api_client_override: TicklyApiClient | None = None,
+    security_context_provider: SecurityContextProvider = request_security_context,
 ) -> MCPServer[AppContext]:
     """创建官方 SDK v2 MCPServer，并绑定 Tickly 单一上游生命周期。"""
     lifecycle_state = LifecycleState()
@@ -127,6 +133,7 @@ def create_mcp_server(
         ),
     )
     register_health_routes(server, settings, lifecycle_state)
+    register_tools(server, security_context_provider)
     return server
 
 
