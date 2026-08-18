@@ -197,6 +197,10 @@ async def test_write_tool_input_and_output_schemas_are_restricted() -> None:
     assert create_input["additionalProperties"] is False
     assert "status" not in create_input["properties"]
     assert "serial" not in create_input["properties"]
+    assert create_input["properties"]["due_at"]["anyOf"] == [
+        {"format": "date-time", "type": "string"},
+        {"type": "null"},
+    ]
 
     update_schema = tools["update_task"].input_schema
     assert update_schema["additionalProperties"] is False
@@ -213,6 +217,10 @@ async def test_write_tool_input_and_output_schemas_are_restricted() -> None:
     assert update_input.get("required", []) == []
     assert update_input["additionalProperties"] is False
     assert "status" not in update_input["properties"]
+    assert update_input["properties"]["due_at"]["anyOf"] == [
+        {"format": "date-time", "type": "string"},
+        {"type": "null"},
+    ]
 
     status_schema = tools["set_task_status"].input_schema
     assert status_schema["additionalProperties"] is False
@@ -347,6 +355,87 @@ async def test_create_omits_defaults_and_update_preserves_explicit_nulls() -> No
                     "due_at": None,
                     "parent_serial": None,
                 },
+            },
+        ),
+    ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("tool_name", "arguments"),
+    [
+        (
+            "create_task",
+            {"task": {"title": "数字时间", "topic": "工作", "due_at": 0}},
+        ),
+        (
+            "create_task",
+            {"task": {"title": "数字字符串时间", "topic": "工作", "due_at": "0"}},
+        ),
+        (
+            "update_task",
+            {"serial": 9, "patch": {"due_at": 0}},
+        ),
+        (
+            "update_task",
+            {"serial": 9, "patch": {"due_at": "0"}},
+        ),
+    ],
+    ids=[
+        "create-number",
+        "create-numeric-string",
+        "update-number",
+        "update-numeric-string",
+    ],
+)
+async def test_write_tools_reject_non_rfc3339_datetime_inputs(
+    tool_name: str,
+    arguments: dict[str, object],
+) -> None:
+    """截止时间只接受 RFC3339 字符串，不能把数字解释为 Unix timestamp。"""
+    fake = FakeApiClient()
+
+    async with Client(make_server(fake)) as client:
+        result = await client.call_tool(tool_name, arguments)
+
+    assert result.is_error is True
+    assert fake.calls == []
+
+
+@pytest.mark.asyncio
+async def test_create_and_update_accept_rfc3339_aware_datetime_strings() -> None:
+    """合法 RFC3339 带时区字符串通过，并以 JSON 字符串原样转发。"""
+    fake = FakeApiClient()
+    due_at = "2026-08-20T10:30:00+08:00"
+
+    async with Client(make_server(fake)) as client:
+        created = await client.call_tool(
+            "create_task",
+            {"task": {"title": "创建", "topic": "工作", "due_at": due_at}},
+        )
+        updated = await client.call_tool(
+            "update_task",
+            {"serial": 9, "patch": {"due_at": due_at}},
+        )
+
+    assert created.is_error is False
+    assert updated.is_error is False
+    assert fake.calls == [
+        (
+            "create_task",
+            {
+                "token": TOKEN,
+                "request_id": REQUEST_ID,
+                "payload": {"title": "创建", "topic": "工作", "due_at": due_at},
+            },
+        ),
+        (
+            "update_task",
+            {
+                "token": TOKEN,
+                "request_id": REQUEST_ID,
+                "serial": 9,
+                "patch": {"due_at": due_at},
             },
         ),
     ]
@@ -979,4 +1068,48 @@ async def test_streamable_http_hides_sensitive_local_validation_details() -> Non
     assert sentinel not in error_text
     assert "input_value" not in error_text
     assert "errors.pydantic.dev" not in error_text
+    assert fake.calls == []
+
+
+@pytest.mark.asyncio
+async def test_streamable_http_rejects_non_rfc3339_datetime_inputs() -> None:
+    """真实协议不能把 number 或纯数字字符串日期转成 Unix timestamp。"""
+    fake = FakeApiClient()
+    token_digest = hashlib.sha256(TOKEN.encode("utf-8")).hexdigest()
+    settings = Settings(
+        environment=Environment.TEST,
+        token_sha256=token_digest,
+        allowed_hosts=["testserver"],
+        allowed_origins=["https://codex.example"],
+        api_base_url="http://api:8321",
+        _env_file=None,
+    )
+    application = create_http_app(settings, api_client_override=fake)  # type: ignore[arg-type]
+    protocol_app = application.app.app  # type: ignore[attr-defined]
+    transport = httpx2.ASGITransport(app=application)
+    cases = [
+        ("create_task", {"task": {"title": "数字时间", "topic": "工作", "due_at": 0}}),
+        (
+            "create_task",
+            {"task": {"title": "数字字符串时间", "topic": "工作", "due_at": "0"}},
+        ),
+        ("update_task", {"serial": 9, "patch": {"due_at": 0}}),
+        ("update_task", {"serial": 9, "patch": {"due_at": "0"}}),
+    ]
+
+    async with protocol_app.router.lifespan_context(protocol_app):
+        async with httpx2.AsyncClient(
+            transport=transport,
+            base_url="http://testserver",
+            headers={"Authorization": f"Bearer {TOKEN}"},
+        ) as http:
+            client_transport = streamable_http_client(
+                "http://testserver/mcp",
+                http_client=http,
+                terminate_on_close=False,
+            )
+            async with Client(client_transport) as client:
+                results = [await client.call_tool(name, arguments) for name, arguments in cases]
+
+    assert all(result.is_error for result in results)
     assert fake.calls == []

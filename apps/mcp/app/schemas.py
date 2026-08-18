@@ -1,5 +1,6 @@
 """Tickly 内部 API 响应与 MCP 工具的严格协议模型。"""
 
+import re
 from enum import StrEnum
 from math import isfinite
 from typing import Annotated, Literal, Self
@@ -49,6 +50,22 @@ PageLimit = Annotated[
     BeforeValidator(_normalize_json_integer),
 ]
 ParentQuery = Annotated[str | None, Field(max_length=200)]
+_RFC3339_DATETIME_PATTERN = re.compile(
+    r"^\d{4}-\d{2}-\d{2}[Tt]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:[Zz]|[+-]\d{2}:\d{2})$"
+)
+
+
+def _require_rfc3339_datetime_string(value: object) -> object:
+    """拒绝 Pydantic 支持但 MCP 契约未开放的 Unix timestamp 输入。"""
+    if not isinstance(value, str) or _RFC3339_DATETIME_PATTERN.fullmatch(value) is None:
+        raise ValueError("必须是 RFC3339 date-time 字符串")
+    return value
+
+
+McpAwareDatetime = Annotated[
+    AwareDatetime,
+    BeforeValidator(_require_rfc3339_datetime_string),
+]
 
 
 class TaskStatus(StrEnum):
@@ -68,7 +85,7 @@ class CreateTaskInput(BaseModel):
     description: str | None = Field(default=None, max_length=4000)
     priority: TaskPriority | None = None
     topic: str = Field(min_length=1, max_length=100)
-    due_at: AwareDatetime | None = None
+    due_at: McpAwareDatetime | None = None
     parent_serial: TaskSerial | None = None
 
 
@@ -81,7 +98,7 @@ class UpdateTaskInput(BaseModel):
     description: str | None = Field(default=None, min_length=1, max_length=4000)
     priority: TaskPriority | None = None
     topic: str | None = Field(default=None, min_length=1, max_length=100)
-    due_at: AwareDatetime | None = None
+    due_at: McpAwareDatetime | None = None
     parent_serial: TaskSerial | None = None
 
     @model_validator(mode="after")
