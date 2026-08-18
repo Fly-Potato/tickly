@@ -22,8 +22,9 @@ RUN groupadd --system --gid 10002 tickly-mcp \
 
 WORKDIR /app
 
-COPY --from=builder --chown=tickly-mcp:tickly-mcp /app/.venv /app/.venv
-COPY --chown=tickly-mcp:tickly-mcp apps/mcp/app /app/app
+# 运行账号只需读取代码与依赖；保留 root:root 所有权可阻止进程原地改写。
+COPY --from=builder /app/.venv /app/.venv
+COPY apps/mcp/app /app/app
 
 USER tickly-mcp
 

@@ -23,6 +23,10 @@ __pycache__
 **/.uv-cache
 *.py[cod]
 *.log
+apps/api/data/*.db
+apps/api/data/*.db-shm
+apps/api/data/*.db-wal
+apps/api/data/*.db-journal
 .coverage
 **/.coverage
 htmlcov
