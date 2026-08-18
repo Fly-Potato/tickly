@@ -106,10 +106,8 @@ VPS TLS 生命周期混入本功能。自动化 Compose 测试可以使用本机
 
 当前本地 Codex CLI 已确认的配置命令：
 
-```bash
-codex mcp add tickly \
-  --url https://tickly.example.com/mcp \
-  --bearer-token-env-var TICKLY_MCP_TOKEN
+```shell
+codex mcp add tickly --url https://tickly.example.com/mcp --bearer-token-env-var TICKLY_MCP_TOKEN
 ```
 
 原始 Token 必须存在于启动 Codex 的环境中。写操作审批继续由 Codex 客户端策略

@@ -135,7 +135,7 @@ AI 功能尚未实现。开始接入时至少遵守以下约束：
 - API 改动：运行 `mise exec -- pnpm test:api`。
 - MCP 改动：运行 `mise exec -- pnpm test:mcp`；涉及内部任务契约时同时运行 `mise exec -- pnpm test:api`。
 - API/MCP 内部契约改动：同时运行 `mise exec -- pnpm test:api` 和 `mise exec -- pnpm test:mcp`，并核对 Bearer、`serial`、错误码与请求 ID 的真实 HTTP 契约。
-- MCP 容器、Compose 或 Caddy 改动：额外运行 `docker compose config` 和 `scripts/check-compose.ps1`，并构建 `api`、`mcp`、`web` 镜像。
+- MCP 容器、Compose 或 Caddy 改动：额外运行 `docker compose config --quiet` 和 `scripts/check-compose.ps1`，并构建 `api`、`mcp`、`web` 镜像；不要在验证输出中展开含密钥的 Compose 配置。
 - 认证跨端改动：运行 Web 检查、`mise exec -- pnpm test:web` 和 `mise exec -- pnpm test:api`，并验证真实接口契约。
 - 仅文档改动：检查路径、命令、事实和 Markdown 结构，无需运行应用测试。
 

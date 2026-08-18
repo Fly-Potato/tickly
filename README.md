@@ -120,10 +120,8 @@ printf %s "$TICKLY_MCP_TOKEN" | sha256sum | cut -d ' ' -f 1
 
 在同一环境中用 Codex CLI 添加远程 Streamable HTTP 服务：
 
-```bash
-codex mcp add tickly \
-  --url https://tickly.example.com/mcp \
-  --bearer-token-env-var TICKLY_MCP_TOKEN
+```shell
+codex mcp add tickly --url https://tickly.example.com/mcp --bearer-token-env-var TICKLY_MCP_TOKEN
 ```
 
 将示例域名替换为真实可信 HTTPS 入口。当前 Codex CLI 的 `--env` 只适用于 stdio server；远程 Bearer Token 应使用 `--bearer-token-env-var`，且启动 Codex 的进程必须能读取该环境变量。连接后先执行只读工具 smoke，再按 Codex 的写操作审批策略验证写工具。
@@ -178,6 +176,7 @@ docker compose ps
 
 故障排查应按响应位置和错误类型区分：
 
-- MCP 容器内 `/ready` 返回 `503`：检查 `TICKLY_MCP_TOKEN_SHA256` 是否为合法摘要、MCP 生命周期中的 HTTP client 是否已启动，以及 API `/ready` 是否成功。该探针不校验账号数量、账号状态或 Host/Origin 白名单。
+- MCP 容器无法启动或连接被拒绝：先查看 `docker compose logs mcp`。任意环境中的非法摘要，或生产环境缺少 `TICKLY_MCP_TOKEN_SHA256`，都会让 `Settings` 校验失败，服务不会开始监听端口。
+- 已启动的 MCP 容器内 `/ready` 返回 `503`：检查非生产环境是否未配置 Token 摘要、MCP 生命周期中的 HTTP client 是否尚未启动，以及 API `/ready` 是否不可达或返回非 `200`。生产环境缺少或使用非法摘要时会在启动阶段失败，不会进入 `/ready`；该探针也不校验账号数量、账号状态或 Host/Origin 白名单。
 - MCP `/ready` 正常，但工具返回 `mcp_account_unavailable`：检查数据库是否恰好存在一个账号且该账号已启用；零账号、多账号或唯一账号停用都会失败关闭。
 - `/mcp` 返回 `421` 或 `403`：分别检查请求 `Host` 是否命中 `TICKLY_MCP_ALLOWED_HOSTS`、请求 `Origin` 是否命中 `TICKLY_MCP_ALLOWED_ORIGINS`。无 `Origin` 的 Codex 非浏览器请求不受 Origin 白名单拒绝。
