@@ -174,4 +174,10 @@ docker compose up --detach --force-recreate api mcp
 docker compose ps
 ```
 
-首版不支持新旧 Token 并存；服务采用新摘要后旧 Token 立即失效，轮换期间应预留短暂连接中断。若 MCP 未就绪，依次检查唯一账号是否启用、API `/ready`、摘要是否为 64 位小写十六进制，以及 Host/Origin 白名单是否与可信入口一致。
+首版不支持新旧 Token 并存；服务采用新摘要后旧 Token 立即失效，轮换期间应预留短暂连接中断。
+
+故障排查应按响应位置和错误类型区分：
+
+- MCP 容器内 `/ready` 返回 `503`：检查 `TICKLY_MCP_TOKEN_SHA256` 是否为合法摘要、MCP 生命周期中的 HTTP client 是否已启动，以及 API `/ready` 是否成功。该探针不校验账号数量、账号状态或 Host/Origin 白名单。
+- MCP `/ready` 正常，但工具返回 `mcp_account_unavailable`：检查数据库是否恰好存在一个账号且该账号已启用；零账号、多账号或唯一账号停用都会失败关闭。
+- `/mcp` 返回 `421` 或 `403`：分别检查请求 `Host` 是否命中 `TICKLY_MCP_ALLOWED_HOSTS`、请求 `Origin` 是否命中 `TICKLY_MCP_ALLOWED_ORIGINS`。无 `Origin` 的 Codex 非浏览器请求不受 Origin 白名单拒绝。
