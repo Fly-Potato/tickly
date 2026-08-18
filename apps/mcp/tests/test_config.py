@@ -52,6 +52,9 @@ def test_production_requires_token_hash_and_transport_allowlists() -> None:
         ("allowed_hosts", "tickly.\rexample.com"),
         ("allowed_hosts", "tickly.\nexample.com"),
         ("allowed_hosts", "tickly.\texample.com"),
+        ("allowed_hosts", "[fe80::1%eth 0]:*"),
+        ("allowed_hosts", "[fe80::1%eth\u0085]:*"),
+        ("allowed_hosts", "[fe80::1%网卡]:*"),
         ("allowed_origins", ""),
         ("allowed_origins", "   "),
         ("allowed_origins", "tickly.example.com"),
@@ -64,6 +67,9 @@ def test_production_requires_token_hash_and_transport_allowlists() -> None:
         ("allowed_origins", "https://tickly.\rexample.com"),
         ("allowed_origins", "https://tickly.\nexample.com"),
         ("allowed_origins", "https://tickly.\texample.com"),
+        ("allowed_origins", "http://[fe80::1%eth 0]:*"),
+        ("allowed_origins", "http://[fe80::1%eth\u0085]:*"),
+        ("allowed_origins", "http://[fe80::1%网卡]:*"),
     ],
 )
 def test_transport_allowlists_reject_invalid_entries(field: str, value: str) -> None:
@@ -78,6 +84,7 @@ def test_transport_allowlists_reject_invalid_entries(field: str, value: str) -> 
             "allowed_hosts",
             [
                 "tickly.example.com",
+                "xn--fiqs8s.example",
                 "tickly.example.com:443",
                 "127.0.0.1:*",
                 "[::1]:*",
@@ -87,6 +94,7 @@ def test_transport_allowlists_reject_invalid_entries(field: str, value: str) -> 
             "allowed_origins",
             [
                 "https://tickly.example.com",
+                "https://xn--fiqs8s.example",
                 "https://tickly.example.com:443",
                 "http://127.0.0.1:*",
                 "http://[::1]:*",
