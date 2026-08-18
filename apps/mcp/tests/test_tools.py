@@ -1,4 +1,4 @@
-"""Tickly MCP 只读工具的协议、转发与安全边界测试。"""
+"""Tickly MCP 工具的协议、转发与安全边界测试。"""
 
 from datetime import UTC, datetime
 import hashlib
@@ -18,6 +18,7 @@ from app.schemas import (
     ParentOptionPagePayload,
     TaskDetailPayload,
     TaskListPayload,
+    TaskPayload,
     TopicListPayload,
 )
 
@@ -30,6 +31,11 @@ READ_TOOL_NAMES = {
     "get_task",
     "list_topics",
     "find_parent_tasks",
+}
+ALL_TOOL_NAMES = READ_TOOL_NAMES | {
+    "create_task",
+    "update_task",
+    "set_task_status",
 }
 
 
@@ -113,6 +119,16 @@ class FakeApiClient:
             }
         )
 
+    async def create_task(self, **values: object) -> TaskPayload:
+        self._record("create_task", values)
+        return TaskPayload.model_validate(task_payload(serial=9))
+
+    async def update_task(self, **values: object) -> TaskPayload:
+        self._record("update_task", values)
+        serial = values["serial"]
+        assert isinstance(serial, int), "工具必须把合法 JSON integer 规范化为 int"
+        return TaskPayload.model_validate(task_payload(serial=serial))
+
 
 def make_server(fake_api_client: FakeApiClient):
     settings = Settings(
@@ -132,13 +148,346 @@ async def test_server_exposes_exact_read_tools_with_safe_annotations() -> None:
     async with Client(make_server(FakeApiClient())) as client:
         tools = {tool.name: tool for tool in (await client.list_tools()).tools}
 
-    assert set(tools) == READ_TOOL_NAMES
-    for tool in tools.values():
+    assert READ_TOOL_NAMES <= set(tools)
+    for name in READ_TOOL_NAMES:
+        tool = tools[name]
         assert tool.annotations is not None
         assert tool.annotations.read_only_hint is True
         assert tool.annotations.destructive_hint is False
         assert tool.annotations.idempotent_hint is True
         assert tool.annotations.open_world_hint is False
+
+
+@pytest.mark.asyncio
+async def test_server_exposes_exact_seven_tools_without_delete() -> None:
+    """写工具集合固定为三个，删除能力不会通过命名或额外注册泄露。"""
+    async with Client(make_server(FakeApiClient())) as client:
+        tools = {tool.name: tool for tool in (await client.list_tools()).tools}
+
+    assert set(tools) == ALL_TOOL_NAMES
+    assert "delete_task" not in tools
+    for name in ("create_task", "update_task", "set_task_status"):
+        annotations = tools[name].annotations
+        assert annotations is not None
+        assert annotations.read_only_hint is False
+        assert annotations.destructive_hint is False
+        assert annotations.idempotent_hint is False
+        assert annotations.open_world_hint is False
+
+
+@pytest.mark.asyncio
+async def test_write_tool_input_and_output_schemas_are_restricted() -> None:
+    """写工具只公开业务可写字段，状态变更必须走独立工具。"""
+    async with Client(make_server(FakeApiClient())) as client:
+        tools = {tool.name: tool for tool in (await client.list_tools()).tools}
+
+    create_schema = tools["create_task"].input_schema
+    assert create_schema["required"] == ["task"]
+    create_input = create_schema["$defs"]["CreateTaskInput"]
+    assert set(create_input["properties"]) == {
+        "title",
+        "description",
+        "priority",
+        "topic",
+        "due_at",
+        "parent_serial",
+    }
+    assert set(create_input["required"]) == {"title", "topic"}
+    assert create_input["additionalProperties"] is False
+    assert "status" not in create_input["properties"]
+    assert "serial" not in create_input["properties"]
+
+    update_schema = tools["update_task"].input_schema
+    assert set(update_schema["required"]) == {"serial", "patch"}
+    update_input = update_schema["$defs"]["UpdateTaskInput"]
+    assert set(update_input["properties"]) == {
+        "title",
+        "description",
+        "priority",
+        "topic",
+        "due_at",
+        "parent_serial",
+    }
+    assert update_input.get("required", []) == []
+    assert update_input["additionalProperties"] is False
+    assert "status" not in update_input["properties"]
+
+    status_schema = tools["set_task_status"].input_schema
+    assert set(status_schema["properties"]) == {"serial", "status"}
+    assert set(status_schema["required"]) == {"serial", "status"}
+    assert set(status_schema["$defs"]["TaskStatus"]["enum"]) == {
+        "new",
+        "in_progress",
+        "completed",
+    }
+
+    for name in ("create_task", "update_task", "set_task_status"):
+        output_schema = tools[name].output_schema
+        assert output_schema is not None
+        assert set(output_schema["properties"]) == {"summary", "task"}
+        assert set(output_schema["required"]) == {"summary", "task"}
+
+
+@pytest.mark.asyncio
+async def test_write_tools_forward_exact_payloads_and_return_structured_results() -> None:
+    """创建、普通 patch 与状态 patch 必须逐字段转发认证上下文和机器结果。"""
+    fake = FakeApiClient()
+    async with Client(make_server(fake)) as client:
+        created = await client.call_tool(
+            "create_task",
+            {
+                "task": {
+                    "title": "发布版本",
+                    "description": "完成发布检查",
+                    "priority": "high",
+                    "topic": "工作",
+                    "due_at": "2026-08-20T10:30:00+08:00",
+                    "parent_serial": 7.0,
+                }
+            },
+        )
+        updated = await client.call_tool(
+            "update_task",
+            {
+                "serial": 9.0,
+                "patch": {"title": "已复核发布", "priority": "medium"},
+            },
+        )
+        status_changed = await client.call_tool(
+            "set_task_status",
+            {"serial": 9.0, "status": "completed"},
+        )
+
+    assert fake.calls == [
+        (
+            "create_task",
+            {
+                "token": TOKEN,
+                "request_id": REQUEST_ID,
+                "payload": {
+                    "title": "发布版本",
+                    "description": "完成发布检查",
+                    "priority": "high",
+                    "topic": "工作",
+                    "due_at": "2026-08-20T10:30:00+08:00",
+                    "parent_serial": 7,
+                },
+            },
+        ),
+        (
+            "update_task",
+            {
+                "token": TOKEN,
+                "request_id": REQUEST_ID,
+                "serial": 9,
+                "patch": {"title": "已复核发布", "priority": "medium"},
+            },
+        ),
+        (
+            "update_task",
+            {
+                "token": TOKEN,
+                "request_id": REQUEST_ID,
+                "serial": 9,
+                "patch": {"status": "completed"},
+            },
+        ),
+    ]
+    assert created.is_error is False
+    assert created.structured_content is not None
+    assert created.structured_content["summary"] == "已创建任务 #9"
+    assert created.structured_content["task"]["serial"] == 9
+    assert updated.structured_content is not None
+    assert updated.structured_content["summary"] == "已更新任务 #9"
+    assert status_changed.structured_content is not None
+    assert status_changed.structured_content["summary"] == "已更新任务 #9 的状态"
+
+
+@pytest.mark.asyncio
+async def test_create_omits_defaults_and_update_preserves_explicit_nulls() -> None:
+    """省略字段不进入上游 JSON，而三个 nullable patch 的 null 必须原样保留。"""
+    fake = FakeApiClient()
+    async with Client(make_server(fake)) as client:
+        await client.call_tool(
+            "create_task",
+            {"task": {"title": "最小创建", "topic": "个人"}},
+        )
+        await client.call_tool(
+            "update_task",
+            {
+                "serial": 9,
+                "patch": {
+                    "priority": None,
+                    "due_at": None,
+                    "parent_serial": None,
+                },
+            },
+        )
+
+    assert fake.calls == [
+        (
+            "create_task",
+            {
+                "token": TOKEN,
+                "request_id": REQUEST_ID,
+                "payload": {"title": "最小创建", "topic": "个人"},
+            },
+        ),
+        (
+            "update_task",
+            {
+                "token": TOKEN,
+                "request_id": REQUEST_ID,
+                "serial": 9,
+                "patch": {
+                    "priority": None,
+                    "due_at": None,
+                    "parent_serial": None,
+                },
+            },
+        ),
+    ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("tool_name", "arguments"),
+    [
+        (
+            "create_task",
+            {"task": {"title": "非法状态", "topic": "工作", "status": "new"}},
+        ),
+        (
+            "create_task",
+            {"task": {"title": "服务端字段", "topic": "工作", "serial": 99}},
+        ),
+        (
+            "update_task",
+            {"serial": 9, "patch": {"status": "completed"}},
+        ),
+        (
+            "update_task",
+            {"serial": 9, "patch": {}},
+        ),
+        (
+            "update_task",
+            {"serial": 9, "patch": {"title": None}},
+        ),
+        (
+            "update_task",
+            {"serial": 9, "patch": {"description": None}},
+        ),
+        (
+            "update_task",
+            {"serial": 9, "patch": {"topic": None}},
+        ),
+        (
+            "set_task_status",
+            {"serial": 9, "status": "archived"},
+        ),
+        (
+            "create_task",
+            {
+                "task": {
+                    "title": "无时区截止时间",
+                    "topic": "工作",
+                    "due_at": "2026-08-20T10:30:00",
+                }
+            },
+        ),
+        (
+            "update_task",
+            {
+                "serial": 9,
+                "patch": {"due_at": "2026-08-20T10:30:00"},
+            },
+        ),
+    ],
+    ids=[
+        "create-status",
+        "create-server-field",
+        "update-status",
+        "update-empty",
+        "update-null-title",
+        "update-null-description",
+        "update-null-topic",
+        "invalid-status",
+        "create-naive-datetime",
+        "update-naive-datetime",
+    ],
+)
+async def test_write_tools_reject_forbidden_fields_and_invalid_values(
+    tool_name: str,
+    arguments: dict[str, object],
+) -> None:
+    """非法写入在调用上游前失败，不能依赖 API 再兜底拒绝。"""
+    fake = FakeApiClient()
+
+    async with Client(make_server(fake)) as client:
+        result = await client.call_tool(tool_name, arguments)
+
+    assert result.is_error is True
+    assert fake.calls == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("tool_name", "arguments"),
+    [
+        (
+            "create_task",
+            {"task": {"title": "字符串父级", "topic": "工作", "parent_serial": "7"}},
+        ),
+        (
+            "create_task",
+            {"task": {"title": "布尔父级", "topic": "工作", "parent_serial": True}},
+        ),
+        (
+            "update_task",
+            {"serial": 9, "patch": {"parent_serial": 7.1}},
+        ),
+        (
+            "set_task_status",
+            {"serial": "9", "status": "new"},
+        ),
+    ],
+    ids=["parent-string", "parent-bool", "parent-fraction", "serial-string"],
+)
+async def test_write_integer_inputs_reject_non_json_integer_semantics(
+    tool_name: str,
+    arguments: dict[str, object],
+) -> None:
+    """流水号沿用只读工具的 JSON integer 规范，不接受字符串、布尔或小数。"""
+    fake = FakeApiClient()
+
+    async with Client(make_server(fake)) as client:
+        result = await client.call_tool(tool_name, arguments)
+
+    assert result.is_error is True
+    assert fake.calls == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("tool_name", ["create_task", "update_task", "set_task_status"])
+async def test_write_tools_propagate_stable_errors_without_raw_token(tool_name: str) -> None:
+    """三个写入口都只返回稳定错误，不得在协议错误内容中回显明文 Token。"""
+    fake = FakeApiClient()
+    fake.error = McpToolError("upstream_unavailable", "Tickly API 暂时不可用")
+    arguments = {
+        "create_task": {"task": {"title": "创建", "topic": "工作"}},
+        "update_task": {"serial": 9, "patch": {"title": "更新"}},
+        "set_task_status": {"serial": 9, "status": "new"},
+    }[tool_name]
+
+    async with Client(make_server(fake)) as client:
+        result = await client.call_tool(tool_name, arguments)
+
+    assert result.is_error is True
+    assert len(result.content) == 1
+    error_text = result.content[0].text  # type: ignore[union-attr]
+    assert "upstream_unavailable" in error_text
+    assert "Tickly API 暂时不可用" in error_text
+    assert TOKEN not in error_text
 
 
 @pytest.mark.asyncio

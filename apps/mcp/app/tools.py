@@ -12,6 +12,7 @@ from app.auth import token_from_authorization
 from app.errors import McpToolError
 from app.middleware import REQUEST_ID_PATTERN
 from app.schemas import (
+    CreateTaskInput,
     Cursor,
     PageLimit,
     ParentOptionResult,
@@ -21,9 +22,12 @@ from app.schemas import (
     TaskListResult,
     TaskSerial,
     TaskSort,
+    TaskStatus,
     TaskStatusFilter,
+    TaskWriteResult,
     TopicFilter,
     TopicListResult,
+    UpdateTaskInput,
 )
 
 
@@ -32,6 +36,12 @@ READ_ONLY = ToolAnnotations(
     read_only_hint=True,
     destructive_hint=False,
     idempotent_hint=True,
+    open_world_hint=False,
+)
+WRITE = ToolAnnotations(
+    read_only_hint=False,
+    destructive_hint=False,
+    idempotent_hint=False,
     open_world_hint=False,
 )
 _AUTHENTICATION_ERROR = ("authentication_required", "需要 MCP 认证")
@@ -86,7 +96,7 @@ def register_tools(
     server: MCPServer[Any],
     security_context_provider: SecurityContextProvider = request_security_context,
 ) -> None:
-    """注册当前阶段唯一允许的四个只读工具。
+    """注册当前阶段唯一允许的七个工具，且不提供删除能力。
 
     每次调用都从当前请求取得安全上下文，并复用生命周期中的
     ``TicklyApiClient``。闭包不缓存明文 Token，避免凭据跨请求或进入进程状态。
@@ -172,3 +182,57 @@ def register_tools(
             items=payload.items,
             next_cursor=payload.next_cursor,
         )
+
+    @server.tool(annotations=WRITE, structured_output=True)
+    async def create_task(
+        task: CreateTaskInput,
+        ctx: Context[Any],
+    ) -> TaskWriteResult:
+        """创建根任务或以账号流水号引用父任务的一层子任务。
+
+        只转发调用方明确提供的字段；默认值、父级解析和业务规范化继续由
+        Tickly API 权威处理，MCP 层不得猜测缺失内容。
+        """
+        token, request_id = security_context_provider(ctx)
+        payload = await _api_client_from(ctx).create_task(
+            token=token,
+            request_id=request_id,
+            payload=task.model_dump(exclude_unset=True, mode="json"),
+        )
+        return TaskWriteResult(summary=f"已创建任务 #{payload.serial}", task=payload)
+
+    @server.tool(annotations=WRITE, structured_output=True)
+    async def update_task(
+        serial: TaskSerial,
+        patch: UpdateTaskInput,
+        ctx: Context[Any],
+    ) -> TaskWriteResult:
+        """按账号流水号 patch 普通字段，不在此入口修改任务状态。
+
+        ``exclude_unset`` 保留 PATCH 的省略/显式 null 区别，避免把未提供字段
+        意外清空；父任务关系仍由内部 API 在事务内校验。
+        """
+        token, request_id = security_context_provider(ctx)
+        payload = await _api_client_from(ctx).update_task(
+            token=token,
+            request_id=request_id,
+            serial=serial,
+            patch=patch.model_dump(exclude_unset=True, mode="json"),
+        )
+        return TaskWriteResult(summary=f"已更新任务 #{serial}", task=payload)
+
+    @server.tool(annotations=WRITE, structured_output=True)
+    async def set_task_status(
+        serial: TaskSerial,
+        status: TaskStatus,
+        ctx: Context[Any],
+    ) -> TaskWriteResult:
+        """把任务切换为 New、In Progress 或 Completed。"""
+        token, request_id = security_context_provider(ctx)
+        payload = await _api_client_from(ctx).update_task(
+            token=token,
+            request_id=request_id,
+            serial=serial,
+            patch={"status": status.value},
+        )
+        return TaskWriteResult(summary=f"已更新任务 #{serial} 的状态", task=payload)

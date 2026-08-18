@@ -1,9 +1,17 @@
-"""Tickly 内部 API 响应与 MCP 只读工具的严格协议模型。"""
+"""Tickly 内部 API 响应与 MCP 工具的严格协议模型。"""
 
+from enum import StrEnum
 from math import isfinite
-from typing import Annotated, Literal
+from typing import Annotated, Literal, Self
 
-from pydantic import AwareDatetime, BaseModel, BeforeValidator, ConfigDict, Field
+from pydantic import (
+    AwareDatetime,
+    BaseModel,
+    BeforeValidator,
+    ConfigDict,
+    Field,
+    model_validator,
+)
 
 
 TaskPriority = Literal["low", "medium", "high"]
@@ -41,6 +49,50 @@ PageLimit = Annotated[
     BeforeValidator(_normalize_json_integer),
 ]
 ParentQuery = Annotated[str | None, Field(max_length=200)]
+
+
+class TaskStatus(StrEnum):
+    """状态写工具唯一允许的三个 Tickly 状态。"""
+
+    NEW = "new"
+    IN_PROGRESS = "in_progress"
+    COMPLETED = "completed"
+
+
+class CreateTaskInput(BaseModel):
+    """创建工具的业务输入，拒绝状态、流水号等服务端字段。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    title: str = Field(min_length=1, max_length=200)
+    description: str | None = Field(default=None, max_length=4000)
+    priority: TaskPriority | None = None
+    topic: str = Field(min_length=1, max_length=100)
+    due_at: AwareDatetime | None = None
+    parent_serial: TaskSerial | None = None
+
+
+class UpdateTaskInput(BaseModel):
+    """普通字段 patch；显式 null 与省略必须保留不同的上游语义。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    title: str | None = Field(default=None, min_length=1, max_length=200)
+    description: str | None = Field(default=None, min_length=1, max_length=4000)
+    priority: TaskPriority | None = None
+    topic: str | None = Field(default=None, min_length=1, max_length=100)
+    due_at: AwareDatetime | None = None
+    parent_serial: TaskSerial | None = None
+
+    @model_validator(mode="after")
+    def validate_patch_fields(self) -> Self:
+        """拒绝空 patch 和非空数据库字段的显式清空。"""
+        if not self.model_fields_set:
+            raise ValueError("至少需要提供一个可更新字段")
+        for field_name in ("title", "description", "topic"):
+            if field_name in self.model_fields_set and getattr(self, field_name) is None:
+                raise ValueError(f"{field_name} 不能为 null")
+        return self
 
 
 class ApiPayload(BaseModel):
@@ -127,3 +179,10 @@ class ParentOptionResult(BaseModel):
     summary: str
     items: list[ParentOptionPayload]
     next_cursor: str | None
+
+
+class TaskWriteResult(BaseModel):
+    """写工具返回更新后的机器可读任务与短摘要。"""
+
+    summary: str
+    task: TaskPayload
