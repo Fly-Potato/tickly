@@ -10,6 +10,7 @@ services:
       TICKLY_PORT: ${TICKLY_PORT:-8321}
       TICKLY_JWT_SECRET: ${TICKLY_JWT_SECRET:?TICKLY_JWT_SECRET is required}
       TICKLY_LOG_JSON: "true"
+      TICKLY_MCP_TOKEN_SHA256: ${TICKLY_MCP_TOKEN_SHA256:?TICKLY_MCP_TOKEN_SHA256 is required}
       TICKLY_REFRESH_COOKIE_SECURE: ${TICKLY_REFRESH_COOKIE_SECURE:-true}
     expose:
       - "${TICKLY_PORT:-8321}"
@@ -22,6 +23,31 @@ services:
       retries: 15
       start_period: 5s
 
+  mcp:
+    build:
+      context: .
+      dockerfile: apps/mcp/Dockerfile
+    depends_on:
+      api:
+        condition: service_healthy
+    environment:
+      TICKLY_MCP_ENVIRONMENT: production
+      TICKLY_MCP_HOST: 0.0.0.0
+      TICKLY_MCP_PORT: ${TICKLY_MCP_PORT:-8322}
+      TICKLY_MCP_API_BASE_URL: http://api:${TICKLY_PORT:-8321}
+      TICKLY_MCP_TOKEN_SHA256: ${TICKLY_MCP_TOKEN_SHA256:?TICKLY_MCP_TOKEN_SHA256 is required}
+      TICKLY_MCP_ALLOWED_HOSTS: ${TICKLY_MCP_ALLOWED_HOSTS:?TICKLY_MCP_ALLOWED_HOSTS is required}
+      TICKLY_MCP_ALLOWED_ORIGINS: ${TICKLY_MCP_ALLOWED_ORIGINS:?TICKLY_MCP_ALLOWED_ORIGINS is required}
+      TICKLY_MCP_LOG_JSON: "true"
+    expose:
+      - "${TICKLY_MCP_PORT:-8322}"
+    healthcheck:
+      test: [CMD, python, -c, "import os, urllib.request; urllib.request.urlopen('http://127.0.0.1:{}/ready'.format(os.environ['TICKLY_MCP_PORT']), timeout=2)"]
+      interval: 2s
+      timeout: 3s
+      retries: 15
+      start_period: 5s
+
   web:
     build:
       context: .
@@ -29,8 +55,11 @@ services:
     depends_on:
       api:
         condition: service_healthy
+      mcp:
+        condition: service_healthy
     environment:
       TICKLY_API_PORT: ${TICKLY_PORT:-8321}
+      TICKLY_MCP_PORT: ${TICKLY_MCP_PORT:-8322}
     ports:
       - "8080:8080"
     healthcheck:

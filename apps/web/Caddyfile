@@ -1,6 +1,14 @@
 :8080 {
 	encode zstd gzip
 
+	@internal path /internal/*
+	respond @internal 404
+
+	@mcp path /mcp /mcp/*
+	handle @mcp {
+		reverse_proxy mcp:{$TICKLY_MCP_PORT}
+	}
+
 	@api path /api/* /health /ready
 	handle @api {
 		reverse_proxy api:{$TICKLY_API_PORT}
