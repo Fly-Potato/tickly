@@ -1,0 +1,20 @@
+[project]
+name = "tickly-mcp"
+version = "0.1.0"
+description = "Tickly remote MCP server"
+requires-python = ">=3.13"
+dependencies = [
+    "httpx>=0.28.1,<1",
+    "mcp>=2.0.0,<3",
+    "pydantic-settings>=2.14.2,<3",
+    "uvicorn>=0.35,<1",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+    "pytest-asyncio>=1.2,<2",
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]

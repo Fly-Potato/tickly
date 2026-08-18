@@ -34,5 +34,8 @@ jobs:
       - name: 安装 API 依赖
         run: mise exec -- uv sync --project apps/api --locked
 
+      - name: 安装 MCP 依赖
+        run: mise exec -- uv sync --project apps/mcp --locked
+
       - name: 执行全仓检查
         run: mise exec -- pnpm check

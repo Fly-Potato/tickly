@@ -10,9 +10,11 @@
     "typecheck": "pnpm --filter @tickly/web typecheck",
     "preview": "pnpm --filter @tickly/web preview",
     "dev:api": "cd apps/api && uv run python -m app.server --reload",
+    "dev:mcp": "cd apps/mcp && uv run python -m app.server --reload",
     "test:web": "pnpm --filter @tickly/web test",
     "test:api": "cd apps/api && uv run pytest",
-    "check": "pnpm lint && pnpm typecheck && pnpm build && pnpm test:web && pnpm test:api",
+    "test:mcp": "cd apps/mcp && uv run pytest",
+    "check": "pnpm lint && pnpm typecheck && pnpm build && pnpm test:web && pnpm test:mcp && pnpm test:api",
     "docker:build": "docker compose build",
     "docker:up": "docker compose up --detach --build",
     "docker:down": "docker compose down --remove-orphans"
