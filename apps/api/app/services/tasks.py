@@ -464,6 +464,39 @@ def get_task(session: Session, user_id: str, task_id: str) -> Task:
     return task
 
 
+def get_task_by_serial(session: Session, user_id: str, serial: int) -> Task:
+    """只在当前账号范围内按稳定流水号读取任务。"""
+
+    task = session.scalar(
+        select(Task).where(Task.user_id == user_id, Task.serial == serial)
+    )
+    if task is None:
+        raise TaskNotFound
+    return task
+
+
+def get_task_detail_by_serial(
+    session: Session,
+    user_id: str,
+    serial: int,
+) -> TaskDetail:
+    """按账号流水号读取任务及其直接子任务。"""
+
+    task = get_task_by_serial(session, user_id, serial)
+    # 即使数据库存在异常的跨账号 parent_id 引用，也不能把它带入内部响应。
+    children = list(
+        session.scalars(
+            select(Task)
+            .where(
+                Task.user_id == user_id,
+                Task.parent_id == task.id,
+            )
+            .order_by(Task.serial.asc())
+        ).all()
+    )
+    return TaskDetail(task=task, children=children)
+
+
 def get_task_detail(
     session: Session,
     user_id: str,
