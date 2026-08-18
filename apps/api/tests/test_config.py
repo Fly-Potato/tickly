@@ -50,6 +50,24 @@ def test_authentication_defaults_are_explicit() -> None:
     assert settings.refresh_token_days == 30
     assert settings.refresh_cookie_name == "tickly_refresh"
     assert settings.refresh_cookie_secure is False
+    assert settings.mcp_token_sha256 is None
+
+
+def test_mcp_token_hash_accepts_only_lowercase_sha256_hex() -> None:
+    digest = "a" * 64
+
+    settings = Settings(mcp_token_sha256=digest, _env_file=None)
+
+    assert settings.mcp_token_sha256 == digest
+
+
+@pytest.mark.parametrize(
+    "value",
+    ["a" * 63, "A" * 64, "g" * 64],
+)
+def test_invalid_mcp_token_hash_is_rejected(value: str) -> None:
+    with pytest.raises(ValidationError):
+        Settings(mcp_token_sha256=value, _env_file=None)
 
 
 def test_production_rejects_development_authentication_settings() -> None:

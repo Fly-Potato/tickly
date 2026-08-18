@@ -46,6 +46,8 @@ class Settings(BaseSettings):
     refresh_token_days: PositiveInt = 30
     refresh_cookie_name: str = "tickly_refresh"
     refresh_cookie_secure: bool = False
+    # API 只持有不可逆摘要；原始 MCP Token 仅存在于调用方与请求头中。
+    mcp_token_sha256: str | None = None
 
     @field_validator("api_v1_prefix")
     @classmethod
@@ -53,6 +55,21 @@ class Settings(BaseSettings):
         if value == "/" or not value.startswith("/") or value.endswith("/"):
             raise ValueError(
                 "api_v1_prefix must start with '/' and must not end with '/'"
+            )
+        return value
+
+    @field_validator("mcp_token_sha256")
+    @classmethod
+    def validate_mcp_token_hash(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        if (
+            len(value) != 64
+            or value != value.lower()
+            or any(character not in "0123456789abcdef" for character in value)
+        ):
+            raise ValueError(
+                "mcp_token_sha256 must be a lowercase SHA-256 hex digest"
             )
         return value
 
