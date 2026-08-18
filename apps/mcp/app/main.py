@@ -75,7 +75,9 @@ def build_lifespan(
 
 
 def register_health_routes(
-    server: MCPServer[AppContext], lifecycle_state: LifecycleState
+    server: MCPServer[AppContext],
+    settings: Settings,
+    lifecycle_state: LifecycleState,
 ) -> None:
     """注册不经过 Bearer 的存活与依赖就绪探针。"""
 
@@ -87,6 +89,10 @@ def register_health_routes(
     @server.custom_route("/ready", methods=["GET"], include_in_schema=False)
     async def ready(request: Request) -> JSONResponse:
         del request
+        # 即使上游可达，缺少 MCP 认证摘要也不能对编排器宣告可接流量。
+        # 该检查必须先于网络请求，避免未配置实例产生无意义的内部探测。
+        if settings.token_sha256 is None:
+            return JSONResponse({"status": "not_ready"}, status_code=503)
         http = lifecycle_state.http
         if http is None:
             return JSONResponse({"status": "not_ready"}, status_code=503)
@@ -120,7 +126,7 @@ def create_mcp_server(
             lifecycle_state=lifecycle_state,
         ),
     )
-    register_health_routes(server, lifecycle_state)
+    register_health_routes(server, settings, lifecycle_state)
     return server
 
 
@@ -136,6 +142,7 @@ def create_http_app(
     )
     protocol_app = server.streamable_http_app(
         streamable_http_path="/mcp",
+        stateless_http=True,
         max_request_body_size=settings.max_request_body_size,
         transport_security=TransportSecuritySettings(
             enable_dns_rebinding_protection=True,

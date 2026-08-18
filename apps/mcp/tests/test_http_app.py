@@ -103,6 +103,24 @@ def test_valid_bearer_reaches_mcp_protocol_layer() -> None:
     assert response.headers["X-Request-ID"]
 
 
+def test_authenticated_invalid_json_does_not_accumulate_sdk_server_instances() -> None:
+    application = create_http_app(make_settings())
+    protocol_app = application.app.app
+    session_manager = protocol_app.routes[0].endpoint.session_manager
+
+    with TestClient(application) as client:
+        for _ in range(3):
+            response = client.post(
+                "/mcp",
+                headers={**AUTH_HEADERS, "Content-Type": "application/json"},
+                content=b"not-json",
+            )
+            assert response.status_code == 400
+
+        # 无效请求不能留下只能等进程退出才清理的有状态 SDK transport。
+        assert session_manager._server_instances == {}
+
+
 def test_authenticated_request_rejects_invalid_host() -> None:
     with TestClient(create_http_app(make_settings())) as client:
         response = client.post(
@@ -179,6 +197,24 @@ def test_ready_returns_503_when_upstream_is_not_ready(monkeypatch: Any) -> None:
 
     assert response.status_code == 503
     assert response.json() == {"status": "not_ready"}
+
+
+def test_ready_fails_closed_without_token_digest_and_skips_upstream(
+    monkeypatch: Any,
+) -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(200, json={"status": "ready"})
+
+    install_upstream(monkeypatch, handler)
+    with TestClient(create_http_app(make_settings(token_sha256=None))) as client:
+        response = client.get("/ready")
+
+    assert response.status_code == 503
+    assert response.json() == {"status": "not_ready"}
+    assert requests == []
 
 
 def test_lifespan_configures_timeouts_and_closes_http_client(monkeypatch: Any) -> None:
