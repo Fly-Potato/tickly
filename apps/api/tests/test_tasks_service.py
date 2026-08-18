@@ -17,6 +17,7 @@ from sqlalchemy.orm.attributes import NO_VALUE
 import app.services.tasks as tasks_service
 from app.db.session import create_engine_for_settings, create_session_factory
 from app.models import Task, User
+from app.schemas.mcp_tasks import McpTaskCreateRequest, McpTaskUpdateRequest
 from app.schemas.tasks import (
     ParentOptionQuery,
     SortOrder,
@@ -31,10 +32,12 @@ from app.services.tasks import (
     InvalidCursor,
     TaskNotFound,
     create_task,
+    create_task_by_serial,
     delete_task,
     get_task,
     list_tasks,
     update_task,
+    update_task_by_serial,
 )
 
 
@@ -127,6 +130,228 @@ def test_create_and_get_task_are_bound_to_the_owner(session: Session) -> None:
         get_task(session, other.id, created.id)
     with pytest.raises(TaskNotFound):
         get_task(session, owner.id, "not-a-uuid")
+
+
+def test_create_task_by_serial_resolves_owned_root_after_allocation_lock(
+    session: Session,
+) -> None:
+    owner = add_user(session, "serial-create-owner")
+    root = create_task(
+        session,
+        owner.id,
+        TaskCreateRequest(title="父任务", topic="Tickly"),
+    )
+
+    child = create_task_by_serial(
+        session,
+        owner.id,
+        McpTaskCreateRequest(
+            title="子任务",
+            topic="Tickly",
+            parent_serial=root.serial,
+        ),
+    )
+
+    assert child.serial == 2
+    assert child.parent_id == root.id
+    assert child.description == "子任务"
+
+
+def test_create_task_by_serial_rejects_invalid_parent_and_restores_counter(
+    session: Session,
+) -> None:
+    owner = add_user(session, "serial-create-invalid-owner")
+    other = add_user(session, "serial-create-invalid-other")
+    root = create_task(
+        session,
+        owner.id,
+        TaskCreateRequest(title="父任务", topic="Tickly"),
+    )
+    child = create_task(
+        session,
+        owner.id,
+        TaskCreateRequest(
+            title="子任务",
+            topic="Tickly",
+            parent_id=root.id,
+        ),
+    )
+    create_task(
+        session,
+        other.id,
+        TaskCreateRequest(title="其他账号父任务", topic="Tickly"),
+    )
+
+    for parent_serial in (child.serial, 999):
+        with pytest.raises(tasks_service.InvalidTaskRelationship):
+            create_task_by_serial(
+                session,
+                owner.id,
+                McpTaskCreateRequest(
+                    title="非法层级",
+                    topic="Tickly",
+                    parent_serial=parent_serial,
+                ),
+            )
+
+    # 其他账号相同 serial 不能被当前账号解析为父级；不存在与越权共享同一错误。
+    isolated_owner = add_user(session, "serial-create-cross-owner")
+    with pytest.raises(tasks_service.InvalidTaskRelationship):
+        create_task_by_serial(
+            session,
+            isolated_owner.id,
+            McpTaskCreateRequest(
+                title="跨账号父级",
+                topic="Tickly",
+                parent_serial=1,
+            ),
+        )
+
+    session.refresh(owner)
+    assert owner.next_task_serial == 3
+    recovered = create_task_by_serial(
+        session,
+        owner.id,
+        McpTaskCreateRequest(title="回滚后创建", topic="Tickly"),
+    )
+    assert recovered.serial == 3
+
+
+def test_update_task_by_serial_preserves_omitted_fields_and_clears_nullable_fields(
+    session: Session,
+) -> None:
+    owner = add_user(session, "serial-update-owner")
+    root = create_task(
+        session,
+        owner.id,
+        TaskCreateRequest(title="父任务", topic="Tickly"),
+    )
+    child = create_task(
+        session,
+        owner.id,
+        TaskCreateRequest(
+            title="保留标题",
+            description="保留描述",
+            topic="Tickly",
+            parent_id=root.id,
+            priority="high",
+            due_at=datetime(2026, 8, 20, 8, tzinfo=UTC),
+        ),
+    )
+
+    updated = update_task_by_serial(
+        session,
+        owner.id,
+        child.serial,
+        McpTaskUpdateRequest(
+            priority=None,
+            due_at=None,
+            parent_serial=None,
+        ),
+    )
+
+    assert updated.title == "保留标题"
+    assert updated.description == "保留描述"
+    assert updated.priority is None
+    assert updated.due_at is None
+    assert updated.parent_id is None
+
+
+def test_update_task_by_serial_reuses_relationship_and_completion_rules(
+    session: Session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    owner = add_user(session, "serial-update-rules-owner")
+    root_with_child = create_task(
+        session,
+        owner.id,
+        TaskCreateRequest(title="已有子项的根", topic="Tickly"),
+    )
+    create_task(
+        session,
+        owner.id,
+        TaskCreateRequest(
+            title="现有子项",
+            topic="Tickly",
+            parent_id=root_with_child.id,
+        ),
+    )
+    target_root = create_task(
+        session,
+        owner.id,
+        TaskCreateRequest(title="目标父级", topic="Tickly"),
+    )
+    original_updated_at = root_with_child.updated_at.replace(tzinfo=None)
+
+    with pytest.raises(tasks_service.InvalidTaskRelationship):
+        update_task_by_serial(
+            session,
+            owner.id,
+            root_with_child.serial,
+            McpTaskUpdateRequest(
+                title="不应保留",
+                status="completed",
+                parent_serial=target_root.serial,
+            ),
+        )
+    with pytest.raises(tasks_service.InvalidTaskRelationship):
+        update_task_by_serial(
+            session,
+            owner.id,
+            target_root.serial,
+            McpTaskUpdateRequest(parent_serial=target_root.serial),
+        )
+
+    completed_time = datetime(2026, 8, 18, 12, tzinfo=UTC)
+    monkeypatch.setattr("app.services.tasks.utc_now", lambda: completed_time)
+    completed = update_task_by_serial(
+        session,
+        owner.id,
+        target_root.serial,
+        McpTaskUpdateRequest(status="completed"),
+    )
+
+    session.expire_all()
+    persisted = get_task(session, owner.id, root_with_child.id)
+    assert persisted.title == "已有子项的根"
+    assert persisted.status == "new"
+    assert persisted.completed_at is None
+    assert persisted.updated_at == original_updated_at
+    assert completed.status == "completed"
+    assert completed.completed_at == completed_time.replace(tzinfo=None)
+
+
+def test_update_task_by_serial_rolls_back_all_fields_on_commit_failure(
+    session: Session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    owner = add_user(session, "serial-update-rollback-owner")
+    task = create_task_by_serial(
+        session,
+        owner.id,
+        McpTaskCreateRequest(title="原标题", topic="Tickly"),
+    )
+    original_updated_at = task.updated_at.replace(tzinfo=None)
+
+    def fail_commit() -> None:
+        raise IntegrityError("强制提交失败", {}, RuntimeError("测试事务回滚"))
+
+    with monkeypatch.context() as commit_failure:
+        commit_failure.setattr(session, "commit", fail_commit)
+        with pytest.raises(IntegrityError):
+            update_task_by_serial(
+                session,
+                owner.id,
+                task.serial,
+                McpTaskUpdateRequest(title="不应提交", status="completed"),
+            )
+
+    session.expire_all()
+    persisted = get_task(session, owner.id, task.id)
+    assert persisted.title == "原标题"
+    assert persisted.status == "new"
+    assert persisted.completed_at is None
+    assert persisted.updated_at == original_updated_at
 
 
 def test_create_returns_complete_object_without_post_commit_refresh(

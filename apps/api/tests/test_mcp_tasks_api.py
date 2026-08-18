@@ -1,5 +1,6 @@
 import hashlib
 from collections.abc import Iterator
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -58,12 +59,16 @@ def add_task(
     status: str = "new",
     parent_id: str | None = None,
     user_id: str | None = None,
+    priority: str | None = None,
+    due_at: datetime | None = None,
 ) -> Task:
     """直接写入边界数据，HTTP 断言仍通过真实路由和 service 执行。"""
 
     with client.app.state.database_session_factory() as session:
         resolved_user_id = user_id or session.scalar(select(User.id))
         assert resolved_user_id is not None
+        owner = session.get(User, resolved_user_id)
+        assert owner is not None
         task = Task(
             user_id=resolved_user_id,
             serial=serial,
@@ -72,7 +77,11 @@ def add_task(
             topic=topic,
             status=status,
             parent_id=parent_id,
+            priority=priority,
+            due_at=due_at,
         )
+        # 直接构造的测试数据也必须维护账号计数器，才能真实验证后续 HTTP 创建语义。
+        owner.next_task_serial = max(owner.next_task_serial, serial + 1)
         session.add(task)
         session.commit()
         return task
@@ -324,3 +333,185 @@ def test_internal_routes_are_absent_from_public_openapi(
     paths = mcp_client.get("/openapi.json").json()["paths"]
 
     assert not any(path.startswith("/internal/mcp/") for path in paths)
+
+
+def test_internal_create_resolves_parent_serial_in_same_account(
+    mcp_client: TestClient,
+    mcp_headers: dict[str, str],
+) -> None:
+    root = add_task(mcp_client, serial=1, title="父任务")
+
+    response = mcp_client.post(
+        "/internal/mcp/v1/tasks",
+        headers=mcp_headers,
+        json={"title": "子任务", "topic": "工作", "parent_serial": root.serial},
+    )
+
+    assert response.status_code == 201
+    assert response.json()["serial"] == 2
+    assert response.json()["parent_id"] == root.id
+    assert response.json()["description"] == "子任务"
+
+
+def test_internal_create_rejects_child_parent_without_consuming_serial(
+    mcp_client: TestClient,
+    mcp_headers: dict[str, str],
+) -> None:
+    root = add_task(mcp_client, serial=1, title="根任务")
+    child = add_task(
+        mcp_client,
+        serial=2,
+        title="现有子任务",
+        parent_id=root.id,
+    )
+
+    rejected = mcp_client.post(
+        "/internal/mcp/v1/tasks",
+        headers=mcp_headers,
+        json={"title": "二层任务", "topic": "工作", "parent_serial": child.serial},
+    )
+    recovered = mcp_client.post(
+        "/internal/mcp/v1/tasks",
+        headers=mcp_headers,
+        json={"title": "回滚后任务", "topic": "工作"},
+    )
+
+    assert rejected.status_code == 422
+    assert rejected.json()["error"]["code"] == "invalid_task_relationship"
+    assert recovered.status_code == 201
+    assert recovered.json()["serial"] == 3
+
+
+def test_internal_create_rejects_cross_account_parent_serial(
+    mcp_client: TestClient,
+    mcp_headers: dict[str, str],
+) -> None:
+    with mcp_client.app.state.database_session_factory() as session:
+        owner = session.scalar(select(User))
+        assert owner is not None
+        other = User(username="other-parent", password_hash="test-hash")
+        session.add(other)
+        session.commit()
+        owner_id = owner.id
+        other_id = other.id
+    add_task(
+        mcp_client,
+        serial=1,
+        title="其他账号父任务",
+        user_id=other_id,
+    )
+
+    def resolve_owner() -> User:
+        with mcp_client.app.state.database_session_factory() as session:
+            resolved = session.get(User, owner_id)
+            assert resolved is not None
+            session.expunge(resolved)
+            return resolved
+
+    mcp_client.app.dependency_overrides[get_mcp_current_user] = resolve_owner
+    try:
+        response = mcp_client.post(
+            "/internal/mcp/v1/tasks",
+            headers=mcp_headers,
+            json={"title": "越权子任务", "topic": "工作", "parent_serial": 1},
+        )
+    finally:
+        mcp_client.app.dependency_overrides.clear()
+
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "invalid_task_relationship"
+    assert "其他账号父任务" not in response.text
+
+
+def test_internal_patch_distinguishes_omitted_and_null(
+    mcp_client: TestClient,
+    mcp_headers: dict[str, str],
+) -> None:
+    root = add_task(mcp_client, serial=1, title="父任务")
+    child = add_task(
+        mcp_client,
+        serial=2,
+        title="保留标题",
+        parent_id=root.id,
+        priority="high",
+        due_at=datetime(2026, 8, 20, 8, tzinfo=UTC),
+    )
+
+    response = mcp_client.patch(
+        f"/internal/mcp/v1/tasks/{child.serial}",
+        headers=mcp_headers,
+        json={"priority": None, "due_at": None, "parent_serial": None},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["title"] == "保留标题"
+    assert response.json()["priority"] is None
+    assert response.json()["due_at"] is None
+    assert response.json()["parent_id"] is None
+
+
+def test_internal_status_uses_existing_completion_semantics(
+    mcp_client: TestClient,
+    mcp_headers: dict[str, str],
+    owned_task: Task,
+) -> None:
+    response = mcp_client.patch(
+        f"/internal/mcp/v1/tasks/{owned_task.serial}",
+        headers=mcp_headers,
+        json={"status": "completed"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "completed"
+    assert response.json()["completed_at"].endswith("Z")
+
+
+@pytest.mark.parametrize("field", ["title", "description", "topic", "status"])
+def test_internal_patch_rejects_null_for_required_fields(
+    mcp_client: TestClient,
+    mcp_headers: dict[str, str],
+    owned_task: Task,
+    field: str,
+) -> None:
+    response = mcp_client.patch(
+        f"/internal/mcp/v1/tasks/{owned_task.serial}",
+        headers=mcp_headers,
+        json={field: None},
+    )
+
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "validation_error"
+
+
+def test_internal_patch_rejects_self_parent_and_rolls_back_other_fields(
+    mcp_client: TestClient,
+    mcp_headers: dict[str, str],
+    owned_task: Task,
+) -> None:
+    rejected = mcp_client.patch(
+        f"/internal/mcp/v1/tasks/{owned_task.serial}",
+        headers=mcp_headers,
+        json={"title": "不应保留", "parent_serial": owned_task.serial},
+    )
+    persisted = mcp_client.get(
+        f"/internal/mcp/v1/tasks/{owned_task.serial}",
+        headers=mcp_headers,
+    )
+
+    assert rejected.status_code == 422
+    assert rejected.json()["error"]["code"] == "invalid_task_relationship"
+    assert persisted.status_code == 200
+    assert persisted.json()["title"] == "账号内任务"
+
+
+def test_internal_contract_has_no_delete(
+    mcp_client: TestClient,
+    mcp_headers: dict[str, str],
+    owned_task: Task,
+) -> None:
+    response = mcp_client.delete(
+        f"/internal/mcp/v1/tasks/{owned_task.serial}",
+        headers=mcp_headers,
+    )
+
+    assert response.status_code == 405

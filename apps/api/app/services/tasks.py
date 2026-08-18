@@ -26,6 +26,7 @@ from sqlalchemy.orm import Session, aliased
 
 from app.models import Task, User
 from app.models.user import utc_now
+from app.schemas.mcp_tasks import McpTaskCreateRequest, McpTaskUpdateRequest
 from app.schemas.tasks import (
     ParentOptionQuery,
     SortOrder,
@@ -419,6 +420,56 @@ def _require_valid_parent(
     return parent
 
 
+def _require_valid_parent_serial(
+    session: Session,
+    user_id: str,
+    parent_serial: int,
+    *,
+    task_id: str | None = None,
+) -> Task:
+    """在当前账号和账号写锁内解析根父任务，隐藏越权与不存在的区别。"""
+
+    parent = session.scalar(
+        select(Task).where(
+            Task.user_id == user_id,
+            Task.serial == parent_serial,
+        )
+    )
+    if parent is None or parent.parent_id is not None or parent.id == task_id:
+        raise InvalidTaskRelationship
+    return parent
+
+
+def _create_task_after_allocation(
+    session: Session,
+    user_id: str,
+    serial: int,
+    payload: TaskCreateRequest | McpTaskCreateRequest,
+    *,
+    parent_id: str | None,
+) -> Task:
+    """在调用方已持有账号写锁时构造任务并提交当前事务。"""
+
+    now = utc_now()
+    task = Task(
+        user_id=user_id,
+        serial=serial,
+        title=payload.title,
+        description=payload.description,  # type: ignore[arg-type]
+        priority=(payload.priority.value if payload.priority is not None else None),
+        topic=payload.topic,
+        status="new",
+        due_at=payload.due_at,
+        completed_at=None,
+        parent_id=parent_id,
+        created_at=now,
+        updated_at=now,
+    )
+    session.add(task)
+    session.commit()
+    return task
+
+
 def create_task(session: Session, user_id: str, payload: TaskCreateRequest) -> Task:
     """在单一事务中分配账号流水号、校验父级并创建 new 状态任务。"""
 
@@ -427,28 +478,48 @@ def create_task(session: Session, user_id: str, payload: TaskCreateRequest) -> T
         serial = _allocate_serial(session, user_id)
         if payload.parent_id is not None:
             _require_valid_parent(session, user_id, payload.parent_id)
-        now = utc_now()
-        task = Task(
-            user_id=user_id,
-            serial=serial,
-            title=payload.title,
-            description=payload.description,  # type: ignore[arg-type]
-            priority=(
-                payload.priority.value if payload.priority is not None else None
-            ),
-            topic=payload.topic,
-            status="new",
-            due_at=payload.due_at,
-            completed_at=None,
+        return _create_task_after_allocation(
+            session,
+            user_id,
+            serial,
+            payload,
             parent_id=payload.parent_id,
-            created_at=now,
-            updated_at=now,
         )
-        session.add(task)
-        session.commit()
-        return task
     except Exception:
         # 计数器、父级校验和 INSERT 共用事务，任何失败都不得消耗流水号。
+        session.rollback()
+        raise
+
+
+def create_task_by_serial(
+    session: Session,
+    user_id: str,
+    payload: McpTaskCreateRequest,
+) -> Task:
+    """在 serial 分配事务中解析父流水号并创建 MCP 任务。
+
+    serial UPDATE 同时取得账号关系写锁；父任务必须在锁内按当前账号重新读取，
+    使计数器、父子不变量与 INSERT 共享同一提交或回滚结果。
+    """
+
+    try:
+        serial = _allocate_serial(session, user_id)
+        parent_id = None
+        if payload.parent_serial is not None:
+            parent_id = _require_valid_parent_serial(
+                session,
+                user_id,
+                payload.parent_serial,
+            ).id
+        return _create_task_after_allocation(
+            session,
+            user_id,
+            serial,
+            payload,
+            parent_id=parent_id,
+        )
+    except Exception:
+        # 父 serial 解析失败和 INSERT 失败都必须恢复账号流水号计数器。
         session.rollback()
         raise
 
@@ -519,6 +590,64 @@ def get_task_detail(
     return TaskDetail(task=task, children=children)
 
 
+def _update_task_after_relationship_lock(
+    session: Session,
+    user_id: str,
+    task: Task,
+    payload: TaskUpdateRequest,
+) -> Task:
+    """在调用方按需取得账号关系锁后，校验并提交显式字段。"""
+
+    fields = payload.model_fields_set
+    # 关系校验先于字段赋值；调用方统一回滚，不能留下部分字段更新。
+    if "parent_id" in fields:
+        if payload.parent_id is not None:
+            _require_valid_parent(
+                session,
+                user_id,
+                payload.parent_id,
+                task_id=task.id,
+            )
+            has_children = session.scalar(
+                select(Task.id)
+                .where(
+                    Task.user_id == user_id,
+                    Task.parent_id == task.id,
+                )
+                .limit(1)
+            )
+            if has_children is not None:
+                raise InvalidTaskRelationship
+        task.parent_id = payload.parent_id
+
+    if "title" in fields:
+        task.title = payload.title  # type: ignore[assignment]
+    if "description" in fields:
+        task.description = payload.description  # type: ignore[assignment]
+    if "priority" in fields:
+        task.priority = (
+            payload.priority.value if payload.priority is not None else None
+        )
+    if "topic" in fields:
+        task.topic = payload.topic  # type: ignore[assignment]
+    if "due_at" in fields:
+        task.due_at = payload.due_at
+
+    now = utc_now()
+    if "status" in fields:
+        next_status = payload.status.value  # type: ignore[union-attr]
+        # 重复 completed 保留首次时间；离开 completed 必须清空以支持再次完成。
+        if next_status == "completed" and task.status != "completed":
+            task.completed_at = now
+        elif next_status != "completed":
+            task.completed_at = None
+        task.status = next_status
+
+    task.updated_at = now
+    session.commit()
+    return task
+
+
 def update_task(
     session: Session,
     user_id: str,
@@ -533,56 +662,53 @@ def update_task(
             # 先锁账号，再按目标任务、父任务、子任务顺序读取并校验。
             _lock_user_for_task_relationship(session, user_id)
         task = get_task(session, user_id, task_id)
-
-        # 关系校验先于字段赋值；异常仍统一回滚，避免调用方复用 Session 时残留脏状态。
-        if "parent_id" in fields:
-            if payload.parent_id is not None:
-                _require_valid_parent(
-                    session,
-                    user_id,
-                    payload.parent_id,
-                    task_id=task.id,
-                )
-                has_children = session.scalar(
-                    select(Task.id)
-                    .where(
-                        Task.user_id == user_id,
-                        Task.parent_id == task.id,
-                    )
-                    .limit(1)
-                )
-                if has_children is not None:
-                    raise InvalidTaskRelationship
-            task.parent_id = payload.parent_id
-
-        if "title" in fields:
-            task.title = payload.title  # type: ignore[assignment]
-        if "description" in fields:
-            task.description = payload.description  # type: ignore[assignment]
-        if "priority" in fields:
-            task.priority = (
-                payload.priority.value if payload.priority is not None else None
-            )
-        if "topic" in fields:
-            task.topic = payload.topic  # type: ignore[assignment]
-        if "due_at" in fields:
-            task.due_at = payload.due_at
-
-        now = utc_now()
-        if "status" in fields:
-            next_status = payload.status.value  # type: ignore[union-attr]
-            # 重复 completed 保留首次时间；离开 completed 必须清空以支持再次完成。
-            if next_status == "completed" and task.status != "completed":
-                task.completed_at = now
-            elif next_status != "completed":
-                task.completed_at = None
-            task.status = next_status
-
-        task.updated_at = now
-        session.commit()
-        return task
+        return _update_task_after_relationship_lock(session, user_id, task, payload)
     except Exception:
         # PATCH 是单一事务，任何挂起写入失败都不能留下部分字段变更。
+        session.rollback()
+        raise
+
+
+def update_task_by_serial(
+    session: Session,
+    user_id: str,
+    serial: int,
+    payload: McpTaskUpdateRequest,
+) -> Task:
+    """按账号内 serial 更新任务，并在关系写锁内解析 ``parent_serial``。
+
+    当 PATCH 包含父流水号时，先取得账号锁，再重新读取目标与父任务，防止并发写入
+    在解析和提交之间破坏一层树不变量。所有字段继续由公开更新实现统一维护。
+    """
+
+    try:
+        fields = payload.model_fields_set
+        if "parent_serial" in fields:
+            _lock_user_for_task_relationship(session, user_id)
+        task = get_task_by_serial(session, user_id, serial)
+
+        update_values = payload.model_dump(exclude_unset=True)
+        if "parent_serial" in fields:
+            parent_serial = update_values.pop("parent_serial")
+            parent_id = None
+            if parent_serial is not None:
+                parent_id = _require_valid_parent_serial(
+                    session,
+                    user_id,
+                    parent_serial,
+                    task_id=task.id,
+                ).id
+            update_values["parent_id"] = parent_id
+
+        public_payload = TaskUpdateRequest.model_validate(update_values)
+        return _update_task_after_relationship_lock(
+            session,
+            user_id,
+            task,
+            public_payload,
+        )
+    except Exception:
+        # serial 解析、关系校验和字段写入共享同一回滚边界。
         session.rollback()
         raise
 

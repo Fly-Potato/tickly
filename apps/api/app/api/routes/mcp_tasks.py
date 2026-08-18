@@ -1,4 +1,4 @@
-"""MCP 服务专用的内部只读任务 HTTP 契约。
+"""MCP 服务专用的内部任务 HTTP 契约。
 
 路由只信任 MCP Bearer 依赖解析出的唯一账号，并继续把账号 ID 交给现有
 任务 service 约束所有权。固定集合路由先于流水号详情注册；整个 router 不进入
@@ -12,7 +12,11 @@ from fastapi import APIRouter, Path, Query, status
 from app.api.dependencies import DbSession
 from app.api.mcp_dependencies import McpCurrentUser
 from app.core.errors import AppError
-from app.schemas.mcp_tasks import McpParentOptionQuery
+from app.schemas.mcp_tasks import (
+    McpParentOptionQuery,
+    McpTaskCreateRequest,
+    McpTaskUpdateRequest,
+)
 from app.schemas.tasks import (
     ParentOptionPageResponse,
     ParentOptionResponse,
@@ -25,11 +29,14 @@ from app.schemas.tasks import (
 )
 from app.services.tasks import (
     InvalidCursor,
+    InvalidTaskRelationship,
     TaskNotFound,
+    create_task_by_serial,
     get_task_detail_by_serial,
     list_parent_options,
     list_tasks,
     list_topics,
+    update_task_by_serial,
 )
 
 
@@ -37,6 +44,23 @@ router = APIRouter(prefix="/internal/mcp/v1/tasks", include_in_schema=False)
 TaskQuery = Annotated[TaskListQuery, Query()]
 ParentQuery = Annotated[McpParentOptionQuery, Query()]
 TaskSerial = Annotated[int, Path(ge=1, le=9_223_372_036_854_775_807)]
+
+
+@router.post("", response_model=TaskResponse, status_code=status.HTTP_201_CREATED)
+def create(
+    payload: McpTaskCreateRequest,
+    session: DbSession,
+    user: McpCurrentUser,
+) -> TaskResponse:
+    """用当前账号流水号解析可选父任务并原子创建任务。"""
+
+    try:
+        task = create_task_by_serial(session, user.id, payload)
+    except TaskNotFound as error:
+        raise _task_not_found() from error
+    except InvalidTaskRelationship as error:
+        raise _invalid_task_relationship() from error
+    return TaskResponse.model_validate(task)
 
 
 @router.get("", response_model=TaskListResponse)
@@ -107,6 +131,24 @@ def detail(
     )
 
 
+@router.patch("/{serial}", response_model=TaskResponse)
+def update(
+    serial: TaskSerial,
+    payload: McpTaskUpdateRequest,
+    session: DbSession,
+    user: McpCurrentUser,
+) -> TaskResponse:
+    """按当前账号流水号更新显式字段，不开放删除能力。"""
+
+    try:
+        task = update_task_by_serial(session, user.id, serial, payload)
+    except TaskNotFound as error:
+        raise _task_not_found() from error
+    except InvalidTaskRelationship as error:
+        raise _invalid_task_relationship() from error
+    return TaskResponse.model_validate(task)
+
+
 def _task_not_found() -> AppError:
     # serial 不存在和属于其他账号必须共享响应，避免枚举其他账号资源。
     return AppError(
@@ -122,4 +164,13 @@ def _invalid_cursor() -> AppError:
         status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
         code="invalid_cursor",
         message="分页游标无效",
+    )
+
+
+def _invalid_task_relationship() -> AppError:
+    # 不回显 parent_serial，也不区分不存在、越权或层级冲突。
+    return AppError(
+        status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+        code="invalid_task_relationship",
+        message="父子任务关系无效",
     )
