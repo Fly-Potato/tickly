@@ -504,6 +504,43 @@ def test_internal_patch_rejects_self_parent_and_rolls_back_other_fields(
     assert persisted.json()["title"] == "账号内任务"
 
 
+@pytest.mark.parametrize("invalid_parent_serial", [True, 1.0, "1"])
+def test_internal_create_requires_parent_serial_to_be_a_strict_integer(
+    mcp_client: TestClient,
+    mcp_headers: dict[str, str],
+    invalid_parent_serial: object,
+) -> None:
+    response = mcp_client.post(
+        "/internal/mcp/v1/tasks",
+        headers=mcp_headers,
+        json={
+            "title": "严格父流水号",
+            "topic": "工作",
+            "parent_serial": invalid_parent_serial,
+        },
+    )
+
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "validation_error"
+
+
+@pytest.mark.parametrize("invalid_parent_serial", [True, 1.0, "1"])
+def test_internal_update_requires_parent_serial_to_be_a_strict_integer(
+    mcp_client: TestClient,
+    mcp_headers: dict[str, str],
+    owned_task: Task,
+    invalid_parent_serial: object,
+) -> None:
+    response = mcp_client.patch(
+        f"/internal/mcp/v1/tasks/{owned_task.serial}",
+        headers=mcp_headers,
+        json={"parent_serial": invalid_parent_serial},
+    )
+
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "validation_error"
+
+
 def test_internal_contract_has_no_delete(
     mcp_client: TestClient,
     mcp_headers: dict[str, str],

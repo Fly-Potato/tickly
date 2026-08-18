@@ -54,6 +54,7 @@ class McpTaskCreateRequest(BaseModel):
     due_at: datetime | None = None
     parent_serial: int | None = Field(
         default=None,
+        strict=True,
         ge=1,
         le=_SQLITE_MAX_INTEGER,
     )
@@ -97,6 +98,7 @@ class McpTaskUpdateRequest(BaseModel):
     due_at: datetime | None = None
     parent_serial: int | None = Field(
         default=None,
+        strict=True,
         ge=1,
         le=_SQLITE_MAX_INTEGER,
     )
