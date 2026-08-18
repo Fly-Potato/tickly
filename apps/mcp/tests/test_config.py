@@ -24,6 +24,40 @@ def test_token_hash_must_be_lowercase_sha256(value: str) -> None:
         Settings(token_sha256=value, _env_file=None)
 
 
+def test_invalid_token_hash_error_does_not_echo_sensitive_input() -> None:
+    sentinel = "mcp-token-config-sentinel-do-not-leak"
+
+    with pytest.raises(ValidationError) as error:
+        Settings(token_sha256=sentinel, _env_file=None)
+
+    message = str(error.value)
+    assert "token_sha256" in message
+    assert "value_error" in message
+    assert "input_value" not in message
+    assert "input_type" not in message
+    assert sentinel not in message
+
+
+def test_production_missing_token_hash_does_not_echo_environment_value(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sentinel = "mcp-config-environment-sentinel"
+    monkeypatch.setenv("TICKLY_MCP_ENVIRONMENT", "production")
+    monkeypatch.delenv("TICKLY_MCP_TOKEN_SHA256", raising=False)
+    monkeypatch.setenv(
+        "TICKLY_MCP_API_BASE_URL", f"https://{sentinel}.example.com"
+    )
+
+    with pytest.raises(ValidationError) as error:
+        Settings(_env_file=None)
+
+    message = str(error.value)
+    assert "production token_sha256 is required" in message
+    assert "input_value" not in message
+    assert "input_type" not in message
+    assert sentinel not in message
+
+
 def test_production_requires_token_hash_and_transport_allowlists() -> None:
     with pytest.raises(ValidationError):
         Settings(environment=Environment.PRODUCTION, _env_file=None)

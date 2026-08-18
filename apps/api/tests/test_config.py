@@ -70,6 +70,20 @@ def test_invalid_mcp_token_hash_is_rejected(value: str) -> None:
         Settings(mcp_token_sha256=value, _env_file=None)
 
 
+def test_invalid_mcp_token_hash_error_does_not_echo_sensitive_input() -> None:
+    sentinel = "api-mcp-token-config-sentinel-do-not-leak"
+
+    with pytest.raises(ValidationError) as error:
+        Settings(mcp_token_sha256=sentinel, _env_file=None)
+
+    message = str(error.value)
+    assert "mcp_token_sha256" in message
+    assert "value_error" in message
+    assert "input_value" not in message
+    assert "input_type" not in message
+    assert sentinel not in message
+
+
 def test_production_rejects_development_authentication_settings() -> None:
     with pytest.raises(ValidationError):
         Settings(environment=Environment.PRODUCTION, _env_file=None)
