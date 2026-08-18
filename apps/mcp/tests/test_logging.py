@@ -13,6 +13,8 @@ import httpx2
 import pytest
 from mcp.client import Client
 from mcp.client.streamable_http import streamable_http_client
+from uvicorn.config import LOGGING_CONFIG
+from uvicorn.logging import AccessFormatter
 
 from app.config import Environment, Settings
 from app.logging import JsonFormatter, TextFormatter, configure_logging
@@ -59,6 +61,7 @@ def access_record() -> logging.LogRecord:
     record.status = 200
     record.duration_ms = 1.25
     record.authorization = f"Bearer {RAW_TOKEN}"
+    record.token_sha256 = TOKEN_SHA256
     record.body = SENSITIVE_TEXT
     record.detail = INTERNAL_URL
     return record
@@ -85,6 +88,7 @@ def test_json_log_contains_only_safe_access_fields() -> None:
     assert payload["duration_ms"] == 1.25
     rendered = json.dumps(payload, ensure_ascii=False)
     assert RAW_TOKEN not in rendered
+    assert TOKEN_SHA256 not in rendered
     assert SENSITIVE_TEXT not in rendered
     assert INTERNAL_URL not in rendered
 
@@ -106,6 +110,7 @@ def test_text_log_contains_only_safe_fields_and_ignores_exception_detail() -> No
     assert "status=200" in rendered
     assert "duration_ms=1.25" in rendered
     assert RAW_TOKEN not in rendered
+    assert TOKEN_SHA256 not in rendered
     assert SENSITIVE_TEXT not in rendered
     assert INTERNAL_URL not in rendered
     assert "RuntimeError" not in rendered
@@ -136,6 +141,55 @@ def test_logging_configuration_applies_level_and_selected_formatter() -> None:
     assert isinstance(managed_handlers[0].formatter, JsonFormatter)
 
 
+def test_logging_configuration_suppresses_uvicorn_access_query_output(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Uvicorn 默认 access handler 不得重复输出包含 query 的非 JSON 日志。"""
+    uvicorn_access = logging.getLogger("uvicorn.access")
+    previous_handlers = list(uvicorn_access.handlers)
+    previous_level = uvicorn_access.level
+    previous_propagate = uvicorn_access.propagate
+    access_format = LOGGING_CONFIG["formatters"]["access"]["fmt"]
+    handler = logging.StreamHandler(sys.stdout)
+    handler.setFormatter(AccessFormatter(fmt=access_format))
+    uvicorn_access.handlers = [handler]
+    uvicorn_access.setLevel(logging.INFO)
+    uvicorn_access.propagate = False
+
+    try:
+        configure_logging(make_settings(log_level="INFO", log_json=True))
+        uvicorn_access.info(
+            '%s - "%s %s HTTP/%s" %d',
+            "testclient:1234",
+            "POST",
+            f"/mcp?detail={SENSITIVE_TEXT}&token_sha256={TOKEN_SHA256}",
+            "1.1",
+            200,
+        )
+        logging.getLogger("tickly.mcp.access").info(
+            "request.completed",
+            extra={
+                "request_id": "uvicorn-access-request-1",
+                "method": "POST",
+                "path": "/mcp",
+                "status": 200,
+                "duration_ms": 1.25,
+            },
+        )
+        rendered = capsys.readouterr().out
+    finally:
+        uvicorn_access.handlers = previous_handlers
+        uvicorn_access.setLevel(previous_level)
+        uvicorn_access.propagate = previous_propagate
+
+    assert SENSITIVE_TEXT not in rendered
+    assert TOKEN_SHA256 not in rendered
+    lines = [line for line in rendered.splitlines() if line]
+    assert lines
+    payloads = [json.loads(line) for line in lines]
+    assert any(payload.get("message") == "request.completed" for payload in payloads)
+
+
 @pytest.mark.asyncio
 async def test_tool_log_records_only_allowlisted_identity_and_outcome(
     caplog: pytest.LogCaptureFixture,
@@ -150,7 +204,8 @@ async def test_tool_log_records_only_allowlisted_identity_and_outcome(
                 "task": {
                     "title": SENSITIVE_TEXT,
                     "description": SENSITIVE_TEXT,
-                }
+                },
+                "token_sha256": TOKEN_SHA256,
             },
         },
         request=SimpleNamespace(
@@ -181,7 +236,9 @@ async def test_tool_log_records_only_allowlisted_identity_and_outcome(
     assert hasattr(record, "duration_ms")
     assert not hasattr(record, "arguments")
     assert not hasattr(record, "authorization")
+    assert not hasattr(record, "token_sha256")
     assert RAW_TOKEN not in caplog.text
+    assert TOKEN_SHA256 not in caplog.text
     assert SENSITIVE_TEXT not in caplog.text
 
 
@@ -193,13 +250,21 @@ async def test_tool_log_sanitizes_unknown_name_and_exception(
     middleware = ToolLoggingMiddleware()
     context = SimpleNamespace(
         method="tools/call",
-        params={"name": SENSITIVE_TEXT, "arguments": {"detail": INTERNAL_URL}},
+        params={
+            "name": SENSITIVE_TEXT,
+            "arguments": {
+                "detail": INTERNAL_URL,
+                "token_sha256": TOKEN_SHA256,
+            },
+        },
         request=SimpleNamespace(scope={"state": {"request_id": "tool-request-2"}}),
     )
 
     async def call_next(received: object) -> dict[str, object]:
         assert received is context
-        raise RuntimeError(f"{RAW_TOKEN} {SENSITIVE_TEXT} {INTERNAL_URL}")
+        raise RuntimeError(
+            f"{RAW_TOKEN} {TOKEN_SHA256} {SENSITIVE_TEXT} {INTERNAL_URL}"
+        )
 
     with caplog.at_level(logging.INFO, logger="tickly.mcp.tool"):
         with pytest.raises(RuntimeError):
@@ -219,7 +284,9 @@ async def test_tool_log_sanitizes_unknown_name_and_exception(
     assert record.error_code == "internal_error"
     assert not hasattr(record, "exception")
     assert not hasattr(record, "detail")
+    assert not hasattr(record, "token_sha256")
     assert RAW_TOKEN not in caplog.text
+    assert TOKEN_SHA256 not in caplog.text
     assert SENSITIVE_TEXT not in caplog.text
     assert INTERNAL_URL not in caplog.text
     assert "RuntimeError" not in caplog.text
@@ -254,6 +321,7 @@ def test_real_http_access_log_excludes_authorization_body_and_query(
     assert record.status == 401
     assert record.request_id == response.headers["X-Request-ID"]
     assert RAW_TOKEN not in caplog.text
+    assert TOKEN_SHA256 not in caplog.text
     assert SENSITIVE_TEXT not in caplog.text
 
 
@@ -317,5 +385,6 @@ async def test_real_http_tool_log_reuses_access_request_id_without_body_leak(
     assert matching_access_records
     assert all(record.path == "/mcp" for record in matching_access_records)
     assert RAW_TOKEN not in caplog.text
+    assert TOKEN_SHA256 not in caplog.text
     assert SENSITIVE_TEXT not in caplog.text
     assert INTERNAL_URL not in caplog.text

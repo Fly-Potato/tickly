@@ -93,5 +93,7 @@ def configure_logging(settings: Settings) -> None:
     handler.setFormatter(JsonFormatter() if settings.log_json else TextFormatter())
     root_logger.addHandler(handler)
     root_logger.setLevel(settings.log_level)
-    for noisy_logger in ("httpx", "httpx2", "httpcore", "mcp"):
+    # Uvicorn 默认 access formatter 会输出完整 query；本应用已经在 ASGI 外层
+    # 记录不含 query 的 request.completed，必须关闭其 INFO 事件以免重复和泄漏。
+    for noisy_logger in ("httpx", "httpx2", "httpcore", "mcp", "uvicorn.access"):
         logging.getLogger(noisy_logger).setLevel(logging.WARNING)
