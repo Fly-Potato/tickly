@@ -1,8 +1,9 @@
 """Tickly 内部 API 响应与 MCP 只读工具的严格协议模型。"""
 
+from math import isfinite
 from typing import Annotated, Literal
 
-from pydantic import AwareDatetime, BaseModel, ConfigDict, Field
+from pydantic import AwareDatetime, BaseModel, BeforeValidator, ConfigDict, Field
 
 
 TaskPriority = Literal["low", "medium", "high"]
@@ -10,13 +11,35 @@ TaskStatusValue = Literal["new", "in_progress", "completed"]
 TaskStatusFilter = Literal["all", "new", "in_progress", "completed"]
 TaskSort = Literal["serial", "created_at", "due_at", "priority"]
 SortOrder = Literal["asc", "desc"]
+
+
+def _normalize_json_integer(value: object) -> int:
+    """按 JSON Schema integer 语义校验并规范化整数输入。
+
+    JSON 的布尔值不是数字；字符串也不得由 Pydantic 隐式转换。整值浮点在
+    JSON Schema 2020-12 中属于 integer，规范化为 ``int`` 后再应用范围约束。
+    """
+    if isinstance(value, bool | str) or not isinstance(value, int | float):
+        raise ValueError("必须是 JSON integer")
+    if isinstance(value, float):
+        if not isfinite(value) or not value.is_integer():
+            raise ValueError("必须是 JSON integer")
+        return int(value)
+    return value
+
+
 TaskSerial = Annotated[
     int,
-    Field(strict=True, ge=1, le=9_223_372_036_854_775_807),
+    Field(ge=1, le=9_223_372_036_854_775_807),
+    BeforeValidator(_normalize_json_integer),
 ]
 TopicFilter = Annotated[str | None, Field(max_length=100)]
 Cursor = Annotated[str | None, Field(min_length=1, max_length=2048)]
-PageLimit = Annotated[int, Field(strict=True, ge=1, le=100)]
+PageLimit = Annotated[
+    int,
+    Field(ge=1, le=100),
+    BeforeValidator(_normalize_json_integer),
+]
 ParentQuery = Annotated[str | None, Field(max_length=200)]
 
 

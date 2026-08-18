@@ -284,19 +284,27 @@ async def test_read_tools_forward_stable_defaults() -> None:
     ("tool_name", "arguments"),
     [
         ("get_task", {"serial": "7"}),
-        ("get_task", {"serial": 7.0}),
         ("get_task", {"serial": True}),
+        ("get_task", {"serial": 7.1}),
+        ("get_task", {"serial": float("inf")}),
+        ("get_task", {"serial": float("nan")}),
         ("list_tasks", {"limit": "25"}),
-        ("list_tasks", {"limit": 25.0}),
         ("list_tasks", {"limit": True}),
+        ("list_tasks", {"limit": 25.1}),
+        ("list_tasks", {"limit": float("inf")}),
+        ("list_tasks", {"limit": float("nan")}),
     ],
     ids=[
         "serial-string",
-        "serial-float",
         "serial-bool",
+        "serial-non-integral-float",
+        "serial-infinite-float",
+        "serial-nan",
         "limit-string",
-        "limit-float",
         "limit-bool",
+        "limit-non-integral-float",
+        "limit-infinite-float",
+        "limit-nan",
     ],
 )
 async def test_integer_inputs_reject_coercion_before_calling_upstream(
@@ -311,6 +319,55 @@ async def test_integer_inputs_reject_coercion_before_calling_upstream(
 
     assert result.is_error is True
     assert fake.calls == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("tool_name", "arguments", "expected_call"),
+    [
+        (
+            "get_task",
+            {"serial": 7.0},
+            (
+                "get_task",
+                {"token": TOKEN, "request_id": REQUEST_ID, "serial": 7},
+            ),
+        ),
+        (
+            "list_tasks",
+            {"limit": 25.0},
+            (
+                "list_tasks",
+                {
+                    "token": TOKEN,
+                    "request_id": REQUEST_ID,
+                    "status": "all",
+                    "topic": None,
+                    "sort": "created_at",
+                    "order": "desc",
+                    "cursor": None,
+                    "limit": 25,
+                },
+            ),
+        ),
+    ],
+    ids=["serial-integral-float", "limit-integral-float"],
+)
+async def test_integral_float_inputs_are_normalized_to_integer(
+    tool_name: str,
+    arguments: dict[str, object],
+    expected_call: tuple[str, dict[str, object]],
+) -> None:
+    """JSON Schema integer 包含整值浮点，转发前统一规范化为 Python int。"""
+    fake = FakeApiClient()
+
+    async with Client(make_server(fake)) as client:
+        result = await client.call_tool(tool_name, arguments)
+
+    assert result.is_error is False
+    assert fake.calls == [expected_call]
+    forwarded_value = fake.calls[0][1][next(iter(arguments))]
+    assert type(forwarded_value) is int
 
 
 @pytest.mark.asyncio
