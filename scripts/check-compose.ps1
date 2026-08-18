@@ -1,4 +1,4 @@
-$ErrorActionPreference = "Stop"
+﻿$ErrorActionPreference = "Stop"
 
 # 解析 Compose 的最终模型，避免只靠文本匹配漏掉环境变量插值或默认值问题。
 $rawConfig = docker compose config --format json
