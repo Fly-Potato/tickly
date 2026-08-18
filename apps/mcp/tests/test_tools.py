@@ -182,6 +182,7 @@ async def test_write_tool_input_and_output_schemas_are_restricted() -> None:
         tools = {tool.name: tool for tool in (await client.list_tools()).tools}
 
     create_schema = tools["create_task"].input_schema
+    assert create_schema["additionalProperties"] is False
     assert create_schema["required"] == ["task"]
     create_input = create_schema["$defs"]["CreateTaskInput"]
     assert set(create_input["properties"]) == {
@@ -198,6 +199,7 @@ async def test_write_tool_input_and_output_schemas_are_restricted() -> None:
     assert "serial" not in create_input["properties"]
 
     update_schema = tools["update_task"].input_schema
+    assert update_schema["additionalProperties"] is False
     assert set(update_schema["required"]) == {"serial", "patch"}
     update_input = update_schema["$defs"]["UpdateTaskInput"]
     assert set(update_input["properties"]) == {
@@ -213,6 +215,7 @@ async def test_write_tool_input_and_output_schemas_are_restricted() -> None:
     assert "status" not in update_input["properties"]
 
     status_schema = tools["set_task_status"].input_schema
+    assert status_schema["additionalProperties"] is False
     assert set(status_schema["properties"]) == {"serial", "status"}
     assert set(status_schema["required"]) == {"serial", "status"}
     assert set(status_schema["$defs"]["TaskStatus"]["enum"]) == {
@@ -427,6 +430,82 @@ async def test_write_tools_reject_forbidden_fields_and_invalid_values(
         result = await client.call_tool(tool_name, arguments)
 
     assert result.is_error is True
+    assert fake.calls == []
+
+
+@pytest.mark.asyncio
+async def test_write_tools_reject_unknown_top_level_arguments() -> None:
+    """写工具根参数必须封闭，不能静默忽略状态或服务端字段。"""
+    fake = FakeApiClient()
+    cases = [
+        (
+            "create_task",
+            {"task": {"title": "创建", "topic": "工作"}, "status": "new"},
+        ),
+        (
+            "create_task",
+            {"task": {"title": "创建", "topic": "工作"}, "serial": 9},
+        ),
+        (
+            "update_task",
+            {"serial": 9, "patch": {"title": "更新"}, "status": "completed"},
+        ),
+        (
+            "set_task_status",
+            {"serial": 9, "status": "completed", "id": "task-9"},
+        ),
+    ]
+
+    async with Client(make_server(fake)) as client:
+        results = [await client.call_tool(name, arguments) for name, arguments in cases]
+
+    assert all(result.is_error for result in results)
+    assert fake.calls == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("tool_name", "arguments"),
+    [
+        ("list_tasks", {"topic": "PRIVATE-BODY-XYZ" * 20}),
+        ("get_task", {"serial": "PRIVATE-BODY-XYZ"}),
+        ("list_topics", {"private": "PRIVATE-BODY-XYZ"}),
+        ("find_parent_tasks", {"query": "PRIVATE-BODY-XYZ" * 20}),
+        (
+            "create_task",
+            {
+                "task": {
+                    "title": "创建",
+                    "topic": "工作",
+                    "description": "PRIVATE-BODY-XYZ" * 300,
+                }
+            },
+        ),
+        (
+            "update_task",
+            {"serial": 9, "patch": {"description": "PRIVATE-BODY-XYZ" * 300}},
+        ),
+        ("set_task_status", {"serial": 9, "status": "PRIVATE-BODY-XYZ"}),
+    ],
+)
+async def test_all_tools_return_fixed_local_validation_errors_without_input_echo(
+    tool_name: str,
+    arguments: dict[str, object],
+) -> None:
+    """所有工具的本地校验错误都必须固定化，不回显模型细节或原始输入。"""
+    fake = FakeApiClient()
+
+    async with Client(make_server(fake)) as client:
+        result = await client.call_tool(tool_name, arguments)
+
+    assert result.is_error is True
+    assert len(result.content) == 1
+    error_text = result.content[0].text  # type: ignore[union-attr]
+    assert error_text == "validation_error: 请求参数无效"
+    assert "PRIVATE-BODY-XYZ" not in error_text
+    assert "Arguments" not in error_text
+    assert "input_value" not in error_text
+    assert "errors.pydantic.dev" not in error_text
     assert fake.calls == []
 
 
@@ -850,3 +929,54 @@ async def test_streamable_http_forwards_configured_request_id_header() -> None:
             {"token": TOKEN, "request_id": "correlation-request-1"},
         )
     ]
+
+
+@pytest.mark.asyncio
+async def test_streamable_http_hides_sensitive_local_validation_details() -> None:
+    """真实 Streamable HTTP tools/call 也只能返回固定的本地校验错误。"""
+    fake = FakeApiClient()
+    token_digest = hashlib.sha256(TOKEN.encode("utf-8")).hexdigest()
+    settings = Settings(
+        environment=Environment.TEST,
+        token_sha256=token_digest,
+        allowed_hosts=["testserver"],
+        allowed_origins=["https://codex.example"],
+        api_base_url="http://api:8321",
+        _env_file=None,
+    )
+    application = create_http_app(settings, api_client_override=fake)  # type: ignore[arg-type]
+    protocol_app = application.app.app  # type: ignore[attr-defined]
+    transport = httpx2.ASGITransport(app=application)
+    sentinel = "PRIVATE-BODY-XYZ" * 300
+
+    async with protocol_app.router.lifespan_context(protocol_app):
+        async with httpx2.AsyncClient(
+            transport=transport,
+            base_url="http://testserver",
+            headers={"Authorization": f"Bearer {TOKEN}"},
+        ) as http:
+            client_transport = streamable_http_client(
+                "http://testserver/mcp",
+                http_client=http,
+                terminate_on_close=False,
+            )
+            async with Client(client_transport) as client:
+                result = await client.call_tool(
+                    "create_task",
+                    {
+                        "task": {
+                            "title": "创建",
+                            "topic": "工作",
+                            "description": sentinel,
+                        }
+                    },
+                )
+
+    assert result.is_error is True
+    assert len(result.content) == 1
+    error_text = result.content[0].text  # type: ignore[union-attr]
+    assert error_text == "validation_error: 请求参数无效"
+    assert sentinel not in error_text
+    assert "input_value" not in error_text
+    assert "errors.pydantic.dev" not in error_text
+    assert fake.calls == []

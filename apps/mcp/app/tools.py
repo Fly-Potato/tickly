@@ -4,19 +4,27 @@ from collections.abc import Callable, Mapping
 from typing import Any, cast
 
 from mcp.server import MCPServer
+from mcp.server.context import CallNext, HandlerResult, ServerRequestContext
 from mcp.server.mcpserver import Context
-from mcp.types import ToolAnnotations
+from mcp.types import CallToolResult, TextContent, ToolAnnotations
+from pydantic import BaseModel, ValidationError
 
 from app.api_client import TicklyApiClient
 from app.auth import token_from_authorization
 from app.errors import McpToolError
 from app.middleware import REQUEST_ID_PATTERN
 from app.schemas import (
+    CreateTaskArguments,
     CreateTaskInput,
     Cursor,
+    FindParentTasksArguments,
+    GetTaskArguments,
+    ListTasksArguments,
+    ListTopicsArguments,
     PageLimit,
     ParentOptionResult,
     ParentQuery,
+    SetTaskStatusArguments,
     SortOrder,
     TaskDetailResult,
     TaskListResult,
@@ -27,6 +35,7 @@ from app.schemas import (
     TaskWriteResult,
     TopicFilter,
     TopicListResult,
+    UpdateTaskArguments,
     UpdateTaskInput,
 )
 
@@ -46,6 +55,74 @@ WRITE = ToolAnnotations(
 )
 _AUTHENTICATION_ERROR = ("authentication_required", "需要 MCP 认证")
 _UPSTREAM_ERROR = ("upstream_unavailable", "Tickly API 暂时不可用")
+_VALIDATION_ERROR_TEXT = "validation_error: 请求参数无效"
+_TOOL_ARGUMENT_MODELS: dict[str, type[BaseModel]] = {
+    "list_tasks": ListTasksArguments,
+    "get_task": GetTaskArguments,
+    "list_topics": ListTopicsArguments,
+    "find_parent_tasks": FindParentTasksArguments,
+    "create_task": CreateTaskArguments,
+    "update_task": UpdateTaskArguments,
+    "set_task_status": SetTaskStatusArguments,
+}
+
+
+def _validation_error_result() -> CallToolResult:
+    """构造不携带字段位置、原始输入或动态模型名的固定工具错误。"""
+    return CallToolResult(
+        content=[TextContent(type="text", text=_VALIDATION_ERROR_TEXT)],
+        is_error=True,
+    )
+
+
+def _publish_strict_tool_schemas(result: HandlerResult) -> HandlerResult:
+    """让 tools/list 发布与本地安全预校验完全相同的封闭根 Schema。"""
+    if not isinstance(result, dict):
+        return result
+    tools = result.get("tools")
+    if not isinstance(tools, list):
+        return result
+
+    rewritten_tools: list[object] = []
+    for tool in tools:
+        if not isinstance(tool, dict):
+            rewritten_tools.append(tool)
+            continue
+        model = _TOOL_ARGUMENT_MODELS.get(tool.get("name"))
+        if model is None:
+            rewritten_tools.append(tool)
+            continue
+        rewritten_tool = dict(tool)
+        rewritten_tool["inputSchema"] = model.model_json_schema()
+        rewritten_tools.append(rewritten_tool)
+    return {**result, "tools": rewritten_tools}
+
+
+async def safe_tool_validation_middleware(
+    context: ServerRequestContext[Any, Any],
+    call_next: CallNext,
+) -> HandlerResult:
+    """在 SDK 动态参数模型前执行封闭校验，并固定化本地校验错误。
+
+    MCP SDK 2.0.0 的公开 tool decorator 会用 ``extra=ignore`` 的动态根模型，
+    且默认错误会拼接 Pydantic ``ValidationError``。公共 Server middleware 是
+    SDK 提供的参数验证前入口；这里不记录异常，也不把原始 arguments 保存在
+    错误对象中，从而避免任务正文或凭据随校验详情返回客户端。
+    """
+    if context.method == "tools/call" and isinstance(context.params, Mapping):
+        tool_name = context.params.get("name")
+        model = _TOOL_ARGUMENT_MODELS.get(tool_name) if isinstance(tool_name, str) else None
+        if model is not None:
+            arguments = context.params.get("arguments")
+            try:
+                model.model_validate({} if arguments is None else arguments)
+            except ValidationError:
+                return _validation_error_result()
+
+    result = await call_next(context)
+    if context.method == "tools/list":
+        return _publish_strict_tool_schemas(result)
+    return result
 
 
 def _header(headers: Mapping[str, str], name: str) -> str | None:
@@ -101,6 +178,7 @@ def register_tools(
     每次调用都从当前请求取得安全上下文，并复用生命周期中的
     ``TicklyApiClient``。闭包不缓存明文 Token，避免凭据跨请求或进入进程状态。
     """
+    server.middleware.append(safe_tool_validation_middleware)
 
     @server.tool(annotations=READ_ONLY, structured_output=True)
     async def list_tasks(

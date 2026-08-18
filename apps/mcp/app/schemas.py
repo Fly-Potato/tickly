@@ -95,6 +95,49 @@ class UpdateTaskInput(BaseModel):
         return self
 
 
+class ToolArguments(BaseModel):
+    """所有工具共享的封闭根参数模型。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class ListTasksArguments(ToolArguments):
+    status: TaskStatusFilter = "all"
+    topic: TopicFilter = None
+    sort: TaskSort = "created_at"
+    order: SortOrder = "desc"
+    cursor: Cursor = None
+    limit: PageLimit = 50
+
+
+class GetTaskArguments(ToolArguments):
+    serial: TaskSerial
+
+
+class ListTopicsArguments(ToolArguments):
+    pass
+
+
+class FindParentTasksArguments(ToolArguments):
+    query: ParentQuery = None
+    cursor: Cursor = None
+    limit: PageLimit = 50
+
+
+class CreateTaskArguments(ToolArguments):
+    task: CreateTaskInput
+
+
+class UpdateTaskArguments(ToolArguments):
+    serial: TaskSerial
+    patch: UpdateTaskInput
+
+
+class SetTaskStatusArguments(ToolArguments):
+    serial: TaskSerial
+    status: TaskStatus
+
+
 class ApiPayload(BaseModel):
     """拒绝上游意外字段，避免协议漂移被 MCP 静默吞掉。"""
 
