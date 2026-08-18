@@ -29,6 +29,9 @@ _HOSTNAME_PATTERN = re.compile(
 
 def _is_valid_transport_hostname(value: str) -> bool:
     """接受 IP literal 或符合 Host/Origin authority 约束的 DNS 主机名。"""
+    # 远程 HTTPS MCP 不需要 link-local scope；如未来支持，需按 RFC 6874 独立实现。
+    if "%" in value:
+        return False
     try:
         ip_address(value)
     except ValueError:

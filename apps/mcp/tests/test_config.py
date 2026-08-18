@@ -55,6 +55,8 @@ def test_production_requires_token_hash_and_transport_allowlists() -> None:
         ("allowed_hosts", "[fe80::1%eth 0]:*"),
         ("allowed_hosts", "[fe80::1%eth\u0085]:*"),
         ("allowed_hosts", "[fe80::1%网卡]:*"),
+        ("allowed_hosts", "[fe80::1%eth:0]:*"),
+        ("allowed_hosts", "[fe80::1%eth!0]:*"),
         ("allowed_origins", ""),
         ("allowed_origins", "   "),
         ("allowed_origins", "tickly.example.com"),
@@ -70,6 +72,8 @@ def test_production_requires_token_hash_and_transport_allowlists() -> None:
         ("allowed_origins", "http://[fe80::1%eth 0]:*"),
         ("allowed_origins", "http://[fe80::1%eth\u0085]:*"),
         ("allowed_origins", "http://[fe80::1%网卡]:*"),
+        ("allowed_origins", "http://[fe80::1%eth:0]:*"),
+        ("allowed_origins", "http://[fe80::1%eth!0]:*"),
     ],
 )
 def test_transport_allowlists_reject_invalid_entries(field: str, value: str) -> None:
