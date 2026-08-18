@@ -14,7 +14,12 @@ from starlette.types import ASGIApp
 
 from app.api_client import TicklyApiClient
 from app.config import Settings
-from app.middleware import RequestIdMiddleware, StaticBearerMiddleware
+from app.logging import configure_logging
+from app.middleware import (
+    RequestIdMiddleware,
+    StaticBearerMiddleware,
+    ToolLoggingMiddleware,
+)
 from app.tools import (
     SecurityContextProvider,
     register_tools,
@@ -134,6 +139,8 @@ def create_mcp_server(
         ),
     )
     register_health_routes(server, settings, lifecycle_state)
+    # 工具日志必须位于参数安全校验外层，才能观察校验短路且绝不读取 arguments。
+    server.middleware.append(ToolLoggingMiddleware())
     resolved_security_context_provider = security_context_provider or partial(
         request_security_context,
         request_id_header=settings.request_id_header,
@@ -148,6 +155,7 @@ def create_http_app(
     api_client_override: TicklyApiClient | None = None,
 ) -> ASGIApp:
     """把认证置于 SDK 外层，避免未认证请求获得协议解析细节。"""
+    configure_logging(settings)
     server = create_mcp_server(
         settings,
         api_client_override=api_client_override,
