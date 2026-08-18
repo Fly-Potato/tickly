@@ -56,9 +56,10 @@ class TicklyApiClient:
             if params is not None
             else None
         )
-        response: httpx.Response | None = None
+        buffered_response: httpx.Response | None = None
+        transport_failed = False
         try:
-            response = await self._http.request(
+            async with self._http.stream(
                 method,
                 path,
                 headers={
@@ -67,18 +68,29 @@ class TicklyApiClient:
                 },
                 params=query,
                 json=dict(json) if json is not None else None,
-            )
+            ) as response:
+                content = bytearray()
+                async for chunk in response.aiter_bytes():
+                    # 在追加前按累计解码字节数判断，超限后立即退出迭代；
+                    # async context 随后关闭响应，不再消费剩余网络数据。
+                    if len(content) + len(chunk) > self._max_response_bytes:
+                        raise McpToolError(*_CONTRACT_ERROR)
+                    content.extend(chunk)
+                # 解码阶段不再保留含 Authorization 的原始 request/response。
+                buffered_response = httpx.Response(
+                    response.status_code,
+                    content=bytes(content),
+                )
         except (httpx.TimeoutException, httpx.RequestError):
             # HTTPX 异常持有完整 request（含 Authorization）；离开 except 后再抛
             # 固定错误，避免把含凭据的异常链接到 MCP 可见错误对象。
-            pass
+            transport_failed = True
 
-        if response is None:
+        if transport_failed:
             raise McpToolError(*_UNAVAILABLE_ERROR)
-
-        if len(response.content) > self._max_response_bytes:
+        if buffered_response is None:
             raise McpToolError(*_CONTRACT_ERROR)
-        return self._decode_response(response)
+        return self._decode_response(buffered_response)
 
     def _decode_response(self, response: httpx.Response) -> dict[str, Any]:
         """仅允许稳定错误码，未知响应失败关闭且不回显上游内容。"""

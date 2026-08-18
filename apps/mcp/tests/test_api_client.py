@@ -1,6 +1,6 @@
 """MCP 到 Tickly API 单一 HTTP 边界的契约测试。"""
 
-from collections.abc import Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
 from datetime import UTC, datetime
 import json
 
@@ -14,6 +14,31 @@ from app.errors import McpToolError
 TOKEN = "raw-token"
 REQUEST_ID = "request-1"
 BASE_URL = "http://api:8321"
+
+
+class TrackingByteStream(httpx.AsyncByteStream):
+    """记录响应分块消费和关闭状态，验证超限后不会继续读取。"""
+
+    def __init__(
+        self,
+        chunks: list[bytes],
+        *,
+        read_error: httpx.RequestError | None = None,
+    ) -> None:
+        self.chunks = chunks
+        self.read_error = read_error
+        self.consumed = 0
+        self.closed = False
+
+    async def __aiter__(self) -> AsyncIterator[bytes]:
+        for chunk in self.chunks:
+            self.consumed += 1
+            yield chunk
+        if self.read_error is not None:
+            raise self.read_error
+
+    async def aclose(self) -> None:
+        self.closed = True
 
 
 def task_payload(*, serial: int = 7) -> dict[str, object]:
@@ -310,6 +335,67 @@ async def test_invalid_response_envelope_maps_to_contract_error(
     assert calls == 1
     assert raised.value.code == "upstream_contract_error"
     assert raised.value.public_message == "Tickly API 返回了无效响应"
+
+
+@pytest.mark.asyncio
+async def test_response_limit_stops_stream_immediately_and_closes_it() -> None:
+    stream = TrackingByteStream([b"12345", b"6", b"must-not-be-consumed"])
+    calls = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        return httpx.Response(200, stream=stream)
+
+    with pytest.raises(McpToolError) as raised:
+        await call_with_transport(
+            handler,
+            lambda client: client.list_topics(token=TOKEN, request_id=REQUEST_ID),
+            max_response_bytes=5,
+        )
+
+    assert calls == 1
+    assert stream.consumed == 2
+    assert stream.closed is True
+    assert raised.value.code == "upstream_contract_error"
+    assert raised.value.__cause__ is None
+    assert raised.value.__context__ is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "read_error",
+    [
+        httpx.ReadTimeout("raw-token 响应读取超时"),
+        httpx.ReadError("http://api:8321 响应读取失败"),
+    ],
+    ids=["timeout", "request-error"],
+)
+async def test_stream_read_errors_are_safe_and_never_retried(
+    read_error: httpx.RequestError,
+) -> None:
+    stream = TrackingByteStream([b'{"items":'], read_error=read_error)
+    calls = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        return httpx.Response(200, stream=stream)
+
+    with pytest.raises(McpToolError) as raised:
+        await call_with_transport(
+            handler,
+            lambda client: client.list_topics(token=TOKEN, request_id=REQUEST_ID),
+        )
+
+    assert calls == 1
+    assert stream.consumed == 1
+    assert stream.closed is True
+    assert raised.value.code == "upstream_unavailable"
+    assert TOKEN not in str(raised.value)
+    assert BASE_URL not in str(raised.value)
+    assert raised.value.__cause__ is None
+    assert raised.value.__context__ is None
 
 
 @pytest.mark.asyncio
