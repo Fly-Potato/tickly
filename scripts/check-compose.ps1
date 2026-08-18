@@ -108,16 +108,17 @@ $spaRoute = $spaRoutes[0]
 $internalHandler = $internalRoute.Route.handle[0].routes[0].handle[0]
 $mcpHandler = $mcpRoute.Route.handle[0].routes[0].handle[0]
 $mcpUpstreams = @($mcpHandler.upstreams | ForEach-Object { $_.dial })
+$expectedMcpUpstream = "mcp:$mcpPort"
 if (
     $internalRoute.Route.group -ne $mcpRoute.Route.group -or
     $internalHandler.handler -ne "static_response" -or
     $internalHandler.status_code -ne 404 -or
     $mcpHandler.handler -ne "reverse_proxy" -or
-    "mcp:8322" -notin $mcpUpstreams -or
+    $expectedMcpUpstream -notin $mcpUpstreams -or
     $internalRoute.Index -ge $mcpRoute.Index -or
     $mcpRoute.Index -ge $spaRoute.Index
 ) {
-    throw "Caddy 必须依次互斥处理内部 404、MCP 8322 反代和 SPA fallback"
+    throw "Caddy 必须依次互斥处理内部 404、MCP 配置端口 $mcpPort 反代和 SPA fallback"
 }
 
 Write-Output "Compose MCP 边界检查通过"
