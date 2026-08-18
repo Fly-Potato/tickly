@@ -68,8 +68,8 @@ Caddy / Web container
 
 新增 `apps/mcp`，作为独立的 Python 3.13 uv 项目，拥有自己的
 `pyproject.toml`、`uv.lock`、应用代码、测试和 Dockerfile。生产依赖使用
-`mcp>=2,<3`、HTTP 客户端和必要的配置库；MCP CLI 或 Inspector 只作为开发
-依赖。最终锁文件固定解析出的精确版本。
+`mcp>=2,<3`、HTTP 客户端和必要的配置库；协议测试直接使用 SDK 客户端，未引入
+MCP CLI 或 Inspector 依赖。最终锁文件将 `mcp` 固定为 `2.0.0`。
 
 MCP 容器只负责协议、工具 Schema、入口认证、参数适配、API 调用和安全错误
 映射。任务合法性、账号所有权、父子关系、流水号分配、完成时间和事务仍由
@@ -87,8 +87,10 @@ MCP 容器只负责协议、工具 Schema、入口认证、参数适配、API �
 - 内部网络不是认证边界；所有内部 MCP 请求仍必须携带并校验 Token。
 - MCP 使用独立 `/health` 和 `/ready` 供 Compose 健康检查，这两个路径不经
   Caddy 暴露。`/health` 只表示进程存活，`/ready` 检查配置和 API readiness。
-- MCP 入口限制请求体大小和并发数；存在 `Origin` 时只接受配置的同源值，
-  无 `Origin` 的 Codex 非浏览器请求正常接受。
+- MCP 使用无状态 Streamable HTTP，并限制请求体大小；存在 `Origin` 时只接受
+  配置的同源值，无 `Origin` 的 Codex 非浏览器请求正常接受。
+- Host/Origin 白名单接受普通 IPv4、IPv6 literal 与 DNS 主机名，但不接受带
+  interface scope 的 link-local IPv6；如未来需要此能力，应按 RFC 6874 独立设计。
 
 当前仓库的 Caddy 只监听 `:8080`，尚未实现生产 HTTPS。远程 MCP 上线必须满足
 以下二选一前置条件：由现有可信入口在 Caddy 前终止 TLS，或在后续 VPS 部署中
@@ -102,14 +104,16 @@ VPS TLS 生命周期混入本功能。自动化 Compose 测试可以使用本机
 环境变量，例如 `TICKLY_MCP_TOKEN`；服务器只配置其小写 SHA-256 十六进制值
 `TICKLY_MCP_TOKEN_SHA256`。
 
-Codex 推荐配置：
+当前本地 Codex CLI 已确认的配置命令：
 
-```toml
-[mcp_servers.tickly]
-url = "https://tickly.example.com/mcp"
-bearer_token_env_var = "TICKLY_MCP_TOKEN"
-default_tools_approval_mode = "writes"
+```bash
+codex mcp add tickly \
+  --url https://tickly.example.com/mcp \
+  --bearer-token-env-var TICKLY_MCP_TOKEN
 ```
+
+原始 Token 必须存在于启动 Codex 的环境中。写操作审批继续由 Codex 客户端策略
+控制；服务端文档不假设或固定未确认的客户端审批配置字段。
 
 认证按以下顺序执行：
 
@@ -182,7 +186,7 @@ MCP 应用在生产环境缺少合法的 64 位十六进制哈希时拒绝启动
 ## HTTP 客户端与超时
 
 MCP 为进程生命周期维护一个异步 HTTP client，连接目标只能来自经过校验的
-内部 API base URL。每次工具调用显式设置连接和总请求超时，并透传 request ID。
+内部 API base URL。共享 client 使用显式连接和总请求超时，并透传协议请求 ID。
 
 MCP 不自动重试写请求，因为超时可能发生在 API 已经提交事务之后，重试会重复
 创建或覆盖任务。首版读取请求也不隐式重试，保持失败行为一致，由 Codex 决定
@@ -207,8 +211,10 @@ API 已有稳定错误码保持原义。MCP 仅进行协议层映射，不根据
 
 ## 日志与敏感数据
 
-API 和 MCP 贯穿同一个 `X-Request-ID`。MCP 结构化日志只记录：工具名、结果、
-耗时、HTTP 状态、稳定错误码和 request ID。
+客户端提供且通过校验的 `X-Request-ID` 会由 MCP 返回并透传给 API；缺失或非法时
+由 MCP 生成替代值。为防止客户端把 Token 或任务文本注入日志，MCP 另行生成
+服务端日志关联 ID，并让同一次访问事件与工具事件复用它。MCP 结构化日志只记录：
+工具名、结果、耗时、HTTP 状态、稳定错误码和服务端日志关联 ID。
 
 以下内容禁止写日志：
 
@@ -235,6 +241,10 @@ MCP 应用至少包含以下配置：
 | `TICKLY_MCP_ALLOWED_ORIGINS` | 存在 Origin header 时允许的公网同源列表 |
 | `TICKLY_MCP_CONNECT_TIMEOUT_SECONDS` | API 连接超时 |
 | `TICKLY_MCP_REQUEST_TIMEOUT_SECONDS` | API 总请求超时 |
+| `TICKLY_MCP_REQUEST_ID_HEADER` | 协议请求 ID header，默认 `X-Request-ID` |
+| `TICKLY_MCP_LOG_LEVEL` | MCP 日志级别 |
+| `TICKLY_MCP_LOG_JSON` | 是否输出 JSON 日志 |
+| `TICKLY_MCP_MAX_REQUEST_BODY_SIZE` | MCP 请求体与上游响应体上限 |
 
 API 增加可选的 `TICKLY_MCP_TOKEN_SHA256`。根 `.env.example` 和 MCP 本地
 `.env.example` 只提供说明和占位符，不包含可用 Token。README 记录 Token 生成、

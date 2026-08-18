@@ -4,11 +4,12 @@ Tickly 是一个计划接入 AI 能力的个人多设备 Todo 应用 monorepo。
 
 - `apps/web`：React + Vite 前端
 - `apps/api`：由 uv 管理的 FastAPI 后端
+- `apps/mcp`：由 uv 管理的远程 MCP 服务
 - `packages/*`：可复用 workspace 包
 - `docs/roadmaps`：0 到 1 产品与工程路线图
 - `docs/superpowers`：已确认的设计与实施计划
 
-当前已完成工程与容器基线、SQLAlchemy/SQLite 持久化、单账号用户名 + JWT 认证闭环、受当前用户所有权保护的 Todo API，以及响应式 Todo Web。Todo 支持账号内流水编号 `serial`、New / In Progress / Completed 三种状态、必填的自由文本主题、可选截止时间和一层父子待办。Web 支持快速新增、编辑、删除确认、筛选、排序、cursor 加载更多和账号 IANA 时区；桌面端为左侧筛选、右侧列表的两栏布局，移动端通过 Dialog 抽屉打开筛选。AI 能力尚未实现。账号只能通过后端 CLI 创建和维护。
+当前已完成工程与容器基线、SQLAlchemy/SQLite 持久化、单账号用户名 + JWT 认证闭环、受当前用户所有权保护的 Todo API、响应式 Todo Web，以及供 Codex 使用的远程 MCP 服务。Todo 支持账号内流水编号 `serial`、New / In Progress / Completed 三种状态、必填的自由文本主题、可选截止时间和一层父子待办。Web 支持快速新增、编辑、删除确认、筛选、排序、cursor 加载更多和账号 IANA 时区；桌面端为左侧筛选、右侧列表的两栏布局，移动端通过 Dialog 抽屉打开筛选。模型调用、自然语言任务草稿等 AI 能力尚未实现。账号只能通过后端 CLI 创建和维护。
 
 数据库 schema 通过 Alembic 显式管理。API 本地默认使用 `apps/api/data/tickly.db`，首次运行前从仓库根目录执行：
 
@@ -32,6 +33,7 @@ mise exec -- uv --directory apps/api run alembic downgrade base
 mise install
 mise exec -- pnpm install --frozen-lockfile
 mise exec -- uv sync --project apps/api --locked
+mise exec -- uv sync --project apps/mcp --locked
 ```
 
 ## 本地开发
@@ -39,6 +41,7 @@ mise exec -- uv sync --project apps/api --locked
 ```bash
 mise exec -- pnpm dev:web
 mise exec -- pnpm dev:api
+mise exec -- pnpm dev:mcp
 ```
 
 Vite 默认将 `/api` 代理到 `http://127.0.0.1:8321`，可通过 `VITE_API_PROXY_TARGET` 覆盖。
@@ -59,6 +62,9 @@ API 当前提供以下业务路由以及 `/health`、`/ready` 和 FastAPI 文档
 任务 API 支持 CRUD、三种状态流转、主题与状态筛选、排序、稳定 cursor 分页、主题列表和父待办候选。`/ready` 仅在应用 lifespan 已启动、数据库可访问且数据库 revision 与代码中的 migration head 一致时返回成功。
 
 本地 API 开发可复制 `apps/api/.env.example`；其中 JWT 密钥仅用于开发。用户名会先去除首尾空白并转为小写，只允许 3–32 位小写字母、数字、下划线和连字符。
+本地联调 MCP 时再复制 `apps/mcp/.env.example`，并把同一个
+`TICKLY_MCP_TOKEN_SHA256` 摘要分别写入 `apps/api/.env` 与 `apps/mcp/.env`；
+原始 Token 仍只放在调用客户端环境中。
 
 ## 账号管理
 
@@ -73,19 +79,99 @@ mise exec -- uv --directory apps/api run python -m app.cli user revoke-sessions 
 
 第一版只允许一个账号，不提供公开注册、邮箱登录、账号重新激活或找回密码。access token 有效期默认 15 分钟且只保存在 Web 内存；refresh token 使用固定 30 天绝对期限，只写入 HttpOnly Cookie，数据库仅保存 SHA-256 摘要。
 
+## 远程 MCP
+
+`apps/mcp` 通过无状态 Streamable HTTP `/mcp` 暴露当前唯一启用账号的任务能力。它只调用 API 的内部契约，不直接访问 SQLite；MCP Bearer Token 也不能访问公开 Todo API。服务恰好提供以下七个工具：
+
+- `list_tasks`：按状态、主题、排序和 cursor 分页列出任务组。
+- `get_task`：按账号内 `serial` 读取任务及直接子任务。
+- `list_topics`：列出当前账号已有的精确主题值。
+- `find_parent_tasks`：查找可以作为父任务的根任务。
+- `create_task`：创建根任务或一层子任务。
+- `update_task`：更新普通可写字段，不修改状态。
+- `set_task_status`：切换 New、In Progress 或 Completed 状态。
+
+MCP 不提供删除、批量写入、任意 HTTP 转发或 SQL 工具。任务规则、账号所有权、父子约束、流水号和事务仍由 API 决定。
+
+### Token 与 Codex 配置
+
+在启动 Codex 的主机生成 32 个随机字节，并只输出其 SHA-256 摘要。以下 PowerShell 命令把原始 Token 保留在当前进程环境中：
+
+```powershell
+$env:TICKLY_MCP_TOKEN = [Convert]::ToHexString(
+  [Security.Cryptography.RandomNumberGenerator]::GetBytes(32)
+).ToLowerInvariant()
+$tokenHash = [Convert]::ToHexString(
+  [Security.Cryptography.SHA256]::HashData(
+    [Text.Encoding]::UTF8.GetBytes($env:TICKLY_MCP_TOKEN)
+  )
+).ToLowerInvariant()
+$tokenHash
+```
+
+POSIX shell 可使用：
+
+```bash
+export TICKLY_MCP_TOKEN="$(openssl rand -hex 32)"
+printf %s "$TICKLY_MCP_TOKEN" | sha256sum | cut -d ' ' -f 1
+```
+
+原始 `TICKLY_MCP_TOKEN` 只能存在于 Codex 主机的安全环境中，不能写入服务器 `.env`、日志或仓库。把命令输出的 64 位小写摘要配置到服务器根 `.env` 的 `TICKLY_MCP_TOKEN_SHA256`，API 和 MCP 会由 Compose 接收同一个摘要。
+
+在同一环境中用 Codex CLI 添加远程 Streamable HTTP 服务：
+
+```bash
+codex mcp add tickly \
+  --url https://tickly.example.com/mcp \
+  --bearer-token-env-var TICKLY_MCP_TOKEN
+```
+
+将示例域名替换为真实可信 HTTPS 入口。当前 Codex CLI 的 `--env` 只适用于 stdio server；远程 Bearer Token 应使用 `--bearer-token-env-var`，且启动 Codex 的进程必须能读取该环境变量。连接后先执行只读工具 smoke，再按 Codex 的写操作审批策略验证写工具。
+
 ## 检查
 
 ```bash
 mise exec -- pnpm check
 ```
 
-也可分别运行 `mise exec -- pnpm lint`、`mise exec -- pnpm typecheck`、`mise exec -- pnpm build`、`mise exec -- pnpm test:web` 和 `mise exec -- pnpm test:api`。
+也可分别运行 `mise exec -- pnpm lint`、`mise exec -- pnpm typecheck`、`mise exec -- pnpm build`、`mise exec -- pnpm test:web`、`mise exec -- pnpm test:mcp` 和 `mise exec -- pnpm test:api`。
 
 ## Docker
 
 常用命令：`mise exec -- pnpm docker:build`、`mise exec -- pnpm docker:up`、`mise exec -- pnpm docker:down`。
-Compose 只发布 Web 的 `8080` 端口，API 通过内部网络由 Caddy 代理；两个运行容器均使用非 root 用户。
-Compose 可通过根 `.env` 中的 `TICKLY_HOST`、`TICKLY_PORT` 调整 API 容器的内部监听参数，
-健康检查和 Caddy 上游端口会同步变化。容器监听地址通常应保持 `0.0.0.0`；Web 对宿主机
-发布的端口仍为 `8080`，API 端口不会直接发布到宿主机。
-生产 Compose 强制要求 `TICKLY_JWT_SECRET`，且密钥至少 32 个字符。复制根 `.env.example` 为 `.env` 后必须替换示例值；不要复用开发默认密钥或提交 `.env`。
+Compose 只发布 Web/Caddy 的 `8080` 端口，API 和 MCP 只暴露在 Compose 内网；API、MCP 和 Web 三个运行容器均使用非 root 用户。Caddy 代理 `/api/*` 与 `/mcp`，并在 SPA fallback 前将 `/internal/*` 固定为 `404`。
+
+根 `.env` 至少需要替换以下生产配置：
+
+```dotenv
+TICKLY_JWT_SECRET=replace-with-at-least-32-random-characters
+TICKLY_MCP_TOKEN_SHA256=replace-with-the-generated-lowercase-sha256
+TICKLY_MCP_ALLOWED_HOSTS=["tickly.example.com"]
+TICKLY_MCP_ALLOWED_ORIGINS=["https://tickly.example.com"]
+```
+
+不要把原始 `TICKLY_MCP_TOKEN` 写入该文件。`TICKLY_MCP_ALLOWED_HOSTS` 应匹配入口实际传给 MCP 的 `Host`；`TICKLY_MCP_ALLOWED_ORIGINS` 只在请求带 `Origin` 时参与校验，无 `Origin` 的 Codex 请求仍可进入。生产环境不接受空白名单。根 `.env.example` 中的本机 HTTP 值仅用于本地验证。
+
+首次部署或新数据库先执行 migration，再启动服务：
+
+```bash
+docker compose run --rm api python -m alembic upgrade head
+mise exec -- pnpm docker:up
+docker compose ps
+curl --fail http://127.0.0.1:8080/health
+curl --fail http://127.0.0.1:8080/ready
+docker compose exec mcp python -c "import os, urllib.request; print(urllib.request.urlopen('http://127.0.0.1:{}/ready'.format(os.environ['TICKLY_MCP_PORT'])).read().decode())"
+```
+
+API `/health` 只检查进程，API `/ready` 还检查数据库与 migration。MCP `/health` 只检查进程；MCP `/ready` 要求合法 Token 摘要且 API `/ready` 成功，Compose 使用它作为 MCP 健康检查。公网 Caddy 不暴露 MCP 的探针路径。
+
+当前仓库的 Caddy 仍只监听本机 HTTP `:8080`，Compose 不包含证书或生产 TLS 配置。真实远程 Codex 连接必须由现有可信入口在 Caddy 前终止 TLS，或另行配置域名、证书及 `80/443`；只有 HTTP 时不能视为远程生产就绪。
+
+轮换 Token 时重新生成原始值与摘要，更新服务器 `TICKLY_MCP_TOKEN_SHA256` 后重建 API/MCP，并让新 Codex 进程读取新的原始值：
+
+```bash
+docker compose up --detach --force-recreate api mcp
+docker compose ps
+```
+
+首版不支持新旧 Token 并存；服务采用新摘要后旧 Token 立即失效，轮换期间应预留短暂连接中断。若 MCP 未就绪，依次检查唯一账号是否启用、API `/ready`、摘要是否为 64 位小写十六进制，以及 Host/Origin 白名单是否与可信入口一致。

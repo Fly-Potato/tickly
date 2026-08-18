@@ -8,7 +8,8 @@ Tickly 是一个计划接入 AI 能力的类 Todo List 项目，采用 monorepo 
 
 - `apps/web` 已具备用户名登录、内存 access token、自动 refresh 和认证状态恢复；新版响应式 Todo 工作区在桌面端使用左筛选、右列表两栏布局，移动端使用筛选 Dialog，并支持 CRUD、New / In Progress / Completed 三状态、必填自由文本主题、账号内 `serial`、可选截止时间、一层父子待办、筛选、排序、cursor 分页、账号时区和 Vitest 测试。
 - `apps/api` 已具备 FastAPI 应用工厂、`/health`、数据库与 migration 感知的 `/ready`、请求 ID、统一错误、结构化日志、SQLAlchemy/SQLite 数据层、Alembic migration、单账号 CLI 和 JWT/refresh 会话认证；Todo API 已支持账号内 `serial`、必填 `description` 与 `topic`、可空 `priority`、三状态、可选截止时间、一层父子待办、`/api/v1/tasks/topics` 与 `/api/v1/tasks/parent-options`，所有任务访问均受当前用户所有权保护。
-- AI 功能尚未实现；不要把规划能力描述成现有能力。
+- `apps/mcp` 已具备官方 MCP Python SDK v2 的无状态 Streamable HTTP `/mcp`、长期 Bearer Token 认证、七个受限 Todo 工具、内部 API 适配、结构化日志与健康检查；不提供删除工具，也不直接访问 SQLite。
+- 模型调用、自然语言任务规划等 AI 功能尚未实现；不要把这些能力描述成现有能力。
 
 实现新功能前先确认当前任务属于 Web、API 还是真正需要跨应用复用的代码，不为可能出现的需求提前扩展架构。
 
@@ -16,6 +17,7 @@ Tickly 是一个计划接入 AI 能力的类 Todo List 项目，采用 monorepo 
 
 - `apps/web`：React、TypeScript 与 Vite Web 应用。
 - `apps/api`：FastAPI 服务，由 uv 管理 Python 环境和依赖。
+- `apps/mcp`：远程 MCP 服务，由 uv 独立管理 Python 环境和依赖。
 - `packages/*`：跨 workspace 复用代码的预留位置；只有出现真实的跨应用消费者后才新增包。
 - `docs/roadmaps`：跨阶段的产品与工程路线图。
 - `docs/superpowers/specs`：已经确认的设计文档。
@@ -27,8 +29,9 @@ Tickly 是一个计划接入 AI 能力的类 Todo List 项目，采用 monorepo 
 - JavaScript workspace 使用 pnpm，唯一锁文件是根 `pnpm-lock.yaml`。
 - Web 使用 React 19、TypeScript、Vite、Tailwind CSS 4、shadcn 与 Base UI。
 - API 使用 Python 3.13、FastAPI 和 pytest；依赖与锁文件分别是 `apps/api/pyproject.toml` 和 `apps/api/uv.lock`。
+- MCP 使用 Python 3.13、官方 MCP Python SDK v2 和 pytest；依赖与锁文件分别是 `apps/mcp/pyproject.toml` 和 `apps/mcp/uv.lock`。
 - Python 依赖统一通过 uv 管理，不额外维护 pip requirements 文件。
-- Docker 使用根目录 `compose.yaml`；API 与 Web 镜像必须保持非 root 运行。
+- Docker 使用根目录 `compose.yaml`；API、MCP 与 Web 镜像必须保持非 root 运行。
 - 新增依赖前先确认现有依赖无法满足需求，并把依赖声明到实际使用它的应用或 workspace 包。
 
 ## 常用命令
@@ -41,6 +44,7 @@ Tickly 是一个计划接入 AI 能力的类 Todo List 项目，采用 monorepo 
 mise install
 mise exec -- pnpm install
 mise exec -- uv sync --project apps/api --locked
+mise exec -- uv sync --project apps/mcp --locked
 ```
 
 本地开发：
@@ -48,6 +52,7 @@ mise exec -- uv sync --project apps/api --locked
 ```bash
 mise exec -- pnpm dev:web
 mise exec -- pnpm dev:api
+mise exec -- pnpm dev:mcp
 ```
 
 检查与测试：
@@ -57,6 +62,7 @@ mise exec -- pnpm lint
 mise exec -- pnpm typecheck
 mise exec -- pnpm build
 mise exec -- pnpm test:web
+mise exec -- pnpm test:mcp
 mise exec -- pnpm test:api
 mise exec -- pnpm check
 ```
@@ -127,6 +133,9 @@ AI 功能尚未实现。开始接入时至少遵守以下约束：
 
 - Web 改动：运行 `mise exec -- pnpm lint`、`mise exec -- pnpm typecheck` 和 `mise exec -- pnpm build`。
 - API 改动：运行 `mise exec -- pnpm test:api`。
+- MCP 改动：运行 `mise exec -- pnpm test:mcp`；涉及内部任务契约时同时运行 `mise exec -- pnpm test:api`。
+- API/MCP 内部契约改动：同时运行 `mise exec -- pnpm test:api` 和 `mise exec -- pnpm test:mcp`，并核对 Bearer、`serial`、错误码与请求 ID 的真实 HTTP 契约。
+- MCP 容器、Compose 或 Caddy 改动：额外运行 `docker compose config` 和 `scripts/check-compose.ps1`，并构建 `api`、`mcp`、`web` 镜像。
 - 认证跨端改动：运行 Web 检查、`mise exec -- pnpm test:web` 和 `mise exec -- pnpm test:api`，并验证真实接口契约。
 - 仅文档改动：检查路径、命令、事实和 Markdown 结构，无需运行应用测试。
 
