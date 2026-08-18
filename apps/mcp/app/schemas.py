@@ -10,10 +10,13 @@ TaskStatusValue = Literal["new", "in_progress", "completed"]
 TaskStatusFilter = Literal["all", "new", "in_progress", "completed"]
 TaskSort = Literal["serial", "created_at", "due_at", "priority"]
 SortOrder = Literal["asc", "desc"]
-TaskSerial = Annotated[int, Field(ge=1, le=9_223_372_036_854_775_807)]
+TaskSerial = Annotated[
+    int,
+    Field(strict=True, ge=1, le=9_223_372_036_854_775_807),
+]
 TopicFilter = Annotated[str | None, Field(max_length=100)]
 Cursor = Annotated[str | None, Field(min_length=1, max_length=2048)]
-PageLimit = Annotated[int, Field(ge=1, le=100)]
+PageLimit = Annotated[int, Field(strict=True, ge=1, le=100)]
 ParentQuery = Annotated[str | None, Field(max_length=200)]
 
 

@@ -280,6 +280,40 @@ async def test_read_tools_forward_stable_defaults() -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("tool_name", "arguments"),
+    [
+        ("get_task", {"serial": "7"}),
+        ("get_task", {"serial": 7.0}),
+        ("get_task", {"serial": True}),
+        ("list_tasks", {"limit": "25"}),
+        ("list_tasks", {"limit": 25.0}),
+        ("list_tasks", {"limit": True}),
+    ],
+    ids=[
+        "serial-string",
+        "serial-float",
+        "serial-bool",
+        "limit-string",
+        "limit-float",
+        "limit-bool",
+    ],
+)
+async def test_integer_inputs_reject_coercion_before_calling_upstream(
+    tool_name: str,
+    arguments: dict[str, object],
+) -> None:
+    """流水号和分页上限只接受 JSON integer，不把其他类型强制转换。"""
+    fake = FakeApiClient()
+
+    async with Client(make_server(fake)) as client:
+        result = await client.call_tool(tool_name, arguments)
+
+    assert result.is_error is True
+    assert fake.calls == []
+
+
+@pytest.mark.asyncio
 async def test_read_tools_return_machine_data_and_short_summaries() -> None:
     async with Client(make_server(FakeApiClient())) as client:
         listed = await client.call_tool("list_tasks", {})
