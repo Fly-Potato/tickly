@@ -38,6 +38,60 @@ def test_production_requires_token_hash_and_transport_allowlists() -> None:
     assert settings.token_sha256 is not None
 
 
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("allowed_hosts", ""),
+        ("allowed_hosts", "   "),
+        ("allowed_hosts", "http://tickly.example.com"),
+        ("allowed_hosts", "*.example.com"),
+        ("allowed_hosts", "tickly.example.com/path"),
+        ("allowed_hosts", "tickly.example.com:"),
+        ("allowed_origins", ""),
+        ("allowed_origins", "   "),
+        ("allowed_origins", "tickly.example.com"),
+        ("allowed_origins", "https://*.example.com"),
+        ("allowed_origins", "https://tickly.example.com/path"),
+        ("allowed_origins", "https://user@tickly.example.com"),
+        ("allowed_origins", "https://tickly.example.com:"),
+    ],
+)
+def test_transport_allowlists_reject_invalid_entries(field: str, value: str) -> None:
+    with pytest.raises(ValidationError):
+        Settings(**{field: [value]}, _env_file=None)
+
+
+@pytest.mark.parametrize(
+    ("field", "values"),
+    [
+        (
+            "allowed_hosts",
+            [
+                "tickly.example.com",
+                "tickly.example.com:443",
+                "127.0.0.1:*",
+                "[::1]:*",
+            ],
+        ),
+        (
+            "allowed_origins",
+            [
+                "https://tickly.example.com",
+                "https://tickly.example.com:443",
+                "http://127.0.0.1:*",
+                "http://[::1]:*",
+            ],
+        ),
+    ],
+)
+def test_transport_allowlists_accept_sdk_patterns(
+    field: str, values: list[str]
+) -> None:
+    settings = Settings(**{field: values}, _env_file=None)
+
+    assert getattr(settings, field) == values
+
+
 @pytest.mark.parametrize("field", ["connect_timeout_seconds", "request_timeout_seconds"])
 def test_timeouts_must_be_positive(field: str) -> None:
     with pytest.raises(ValidationError):
