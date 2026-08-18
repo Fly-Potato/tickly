@@ -19,6 +19,7 @@ from app.auth import bearer_matches, token_from_authorization
 
 REQUEST_ID_PATTERN = re.compile(r"^[A-Za-z0-9._-]{1,128}$")
 PUBLIC_PATHS = frozenset({"/health", "/ready"})
+LOG_PATHS = frozenset({"/mcp", "/health", "/ready"})
 TOOL_NAMES = frozenset(
     {
         "list_tasks",
@@ -52,7 +53,11 @@ class RequestIdMiddleware:
             if supplied and REQUEST_ID_PATTERN.fullmatch(supplied)
             else str(uuid4())
         )
+        # 协议 request ID 可以由客户端指定并继续回传/透传；日志关联 ID 必须
+        # 始终由服务端生成，避免 Token、哈希或任务文本借此进入日志。
+        log_request_id = str(uuid4())
         scope.setdefault("state", {})["request_id"] = request_id
+        scope["state"]["log_request_id"] = log_request_id
         started = perf_counter()
         response_status = 500
 
@@ -80,9 +85,9 @@ class RequestIdMiddleware:
             access_logger.info(
                 "request.completed",
                 extra={
-                    "request_id": request_id,
+                    "request_id": log_request_id,
                     "method": scope["method"],
-                    "path": scope["path"],
+                    "path": scope["path"] if scope["path"] in LOG_PATHS else "other",
                     "status": response_status,
                     "duration_ms": round((perf_counter() - started) * 1000, 3),
                 },
@@ -120,12 +125,12 @@ class StaticBearerMiddleware:
         await self.app(scope, receive, send)
 
 
-def _tool_request_id(context: object) -> str | None:
-    """只从入口已规范化的 ASGI state 读取 request ID，不遍历请求 header。"""
+def _tool_log_request_id(context: object) -> str | None:
+    """只读取服务端日志关联 ID，不读取客户端协议 request ID 或 header。"""
     request = getattr(context, "request", None)
     scope = getattr(request, "scope", None)
     state = scope.get("state") if isinstance(scope, Mapping) else None
-    request_id = state.get("request_id") if isinstance(state, Mapping) else None
+    request_id = state.get("log_request_id") if isinstance(state, Mapping) else None
     if isinstance(request_id, str) and REQUEST_ID_PATTERN.fullmatch(request_id):
         return request_id
     return None
@@ -148,7 +153,7 @@ def _is_tool_error(result: HandlerResult) -> bool:
 class ToolLoggingMiddleware:
     """为 tools/call 记录一次完成事件，且不持有或输出调用参数。
 
-    日志只包含固定工具名、结果、耗时、稳定错误码和入口 request ID。异常
+    日志只包含固定工具名、结果、耗时、稳定错误码和服务端日志关联 ID。异常
     类型、repr、协议 content、arguments 与 Authorization 均不进入 LogRecord，
     从源头避免下游 formatter 或 caplog 意外持有敏感数据。
     """
@@ -163,7 +168,7 @@ class ToolLoggingMiddleware:
 
         started = perf_counter()
         tool = _tool_name(context)
-        request_id = _tool_request_id(context)
+        request_id = _tool_log_request_id(context)
         try:
             result = await call_next(context)
         except ValidationError:

@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import logging
 import sys
 from types import SimpleNamespace
 from typing import Any
+from uuid import UUID
 
 import httpx2
 import pytest
@@ -141,6 +143,15 @@ def test_logging_configuration_applies_level_and_selected_formatter() -> None:
     assert isinstance(managed_handlers[0].formatter, JsonFormatter)
 
 
+def _remove_managed_handlers() -> None:
+    """移除绑定当前 pytest 捕获流的受管 handler，避免跨测试持有已关闭流。"""
+    root_logger = logging.getLogger()
+    for handler in list(root_logger.handlers):
+        if getattr(handler, "_tickly_mcp_handler", False):
+            root_logger.removeHandler(handler)
+            handler.close()
+
+
 def test_logging_configuration_suppresses_uvicorn_access_query_output(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
@@ -181,6 +192,7 @@ def test_logging_configuration_suppresses_uvicorn_access_query_output(
         uvicorn_access.handlers = previous_handlers
         uvicorn_access.setLevel(previous_level)
         uvicorn_access.propagate = previous_propagate
+        _remove_managed_handlers()
 
     assert SENSITIVE_TEXT not in rendered
     assert TOKEN_SHA256 not in rendered
@@ -209,7 +221,12 @@ async def test_tool_log_records_only_allowlisted_identity_and_outcome(
             },
         },
         request=SimpleNamespace(
-            scope={"state": {"request_id": "tool-request-1"}},
+            scope={
+                "state": {
+                    "request_id": RAW_TOKEN,
+                    "log_request_id": "8f288b43-3c92-4422-85a7-e55cba8f5833",
+                }
+            },
             headers={"Authorization": f"Bearer {RAW_TOKEN}"},
         ),
     )
@@ -230,7 +247,7 @@ async def test_tool_log_records_only_allowlisted_identity_and_outcome(
     ]
     assert len(records) == 1
     record = records[0]
-    assert record.request_id == "tool-request-1"
+    assert record.request_id == "8f288b43-3c92-4422-85a7-e55cba8f5833"
     assert record.tool == "create_task"
     assert record.outcome == "success"
     assert hasattr(record, "duration_ms")
@@ -257,7 +274,14 @@ async def test_tool_log_sanitizes_unknown_name_and_exception(
                 "token_sha256": TOKEN_SHA256,
             },
         },
-        request=SimpleNamespace(scope={"state": {"request_id": "tool-request-2"}}),
+        request=SimpleNamespace(
+            scope={
+                "state": {
+                    "request_id": TOKEN_SHA256,
+                    "log_request_id": "53ac6d4e-e117-46a8-889c-ffbc21ab849a",
+                }
+            }
+        ),
     )
 
     async def call_next(received: object) -> dict[str, object]:
@@ -278,7 +302,7 @@ async def test_tool_log_sanitizes_unknown_name_and_exception(
     ]
     assert len(records) == 1
     record = records[0]
-    assert record.request_id == "tool-request-2"
+    assert record.request_id == "53ac6d4e-e117-46a8-889c-ffbc21ab849a"
     assert record.tool == "unknown"
     assert record.outcome == "error"
     assert record.error_code == "internal_error"
@@ -319,29 +343,81 @@ def test_real_http_access_log_excludes_authorization_body_and_query(
     assert record.method == "POST"
     assert record.path == "/mcp"
     assert record.status == 401
-    assert record.request_id == response.headers["X-Request-ID"]
+    assert record.request_id != response.headers["X-Request-ID"]
+    UUID(record.request_id)
     assert RAW_TOKEN not in caplog.text
     assert TOKEN_SHA256 not in caplog.text
     assert SENSITIVE_TEXT not in caplog.text
 
 
+@pytest.mark.asyncio
+async def test_managed_access_output_sanitizes_client_ids_paths_and_concurrency(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """并发请求各用独立日志 ID，客户端 ID 与未知 path 不得进入真实输出。"""
+    application = create_http_app(make_settings())
+    transport = httpx2.ASGITransport(app=application)
+    supplied_ids = (RAW_TOKEN, TOKEN_SHA256)
+
+    async with httpx2.AsyncClient(
+        transport=transport,
+        base_url="http://testserver",
+        headers={"Authorization": f"Bearer {RAW_TOKEN}"},
+    ) as client:
+        responses = await asyncio.gather(
+            *(
+                client.get(
+                    f"/{SENSITIVE_TEXT}",
+                    headers={"X-Request-ID": supplied_id},
+                )
+                for supplied_id in supplied_ids
+            )
+        )
+
+    assert [response.headers["X-Request-ID"] for response in responses] == list(
+        supplied_ids
+    )
+    rendered = capsys.readouterr().out
+    _remove_managed_handlers()
+    assert RAW_TOKEN not in rendered
+    assert TOKEN_SHA256 not in rendered
+    assert SENSITIVE_TEXT not in rendered
+    payloads = [json.loads(line) for line in rendered.splitlines() if line]
+    access_payloads = [
+        payload for payload in payloads if payload.get("message") == "request.completed"
+    ]
+    assert len(access_payloads) == 2
+    assert {payload["path"] for payload in access_payloads} == {"other"}
+    log_request_ids = [payload["request_id"] for payload in access_payloads]
+    assert len(set(log_request_ids)) == 2
+    for log_request_id in log_request_ids:
+        UUID(log_request_id)
+
+
 class FakeApiClient:
-    """为真实协议探针返回固定主题，不保存调用参数或凭据。"""
+    """为真实协议探针返回固定主题，只记录非敏感 request ID。"""
+
+    def __init__(self) -> None:
+        self.request_ids: list[str] = []
 
     async def list_topics(self, **values: object) -> TopicListPayload:
-        del values
+        request_id = values["request_id"]
+        assert isinstance(request_id, str)
+        self.request_ids.append(request_id)
         return TopicListPayload(items=["工作"])
 
 
 @pytest.mark.asyncio
 async def test_real_http_tool_log_reuses_access_request_id_without_body_leak(
     caplog: pytest.LogCaptureFixture,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """真实 tools/call 的工具事件与对应 HTTP 访问事件必须共享 request ID。"""
+    """工具与访问事件共享服务端日志 ID，但上游仍收到客户端 request ID。"""
     settings = make_settings()
+    fake = FakeApiClient()
     application = create_http_app(
         settings,
-        api_client_override=FakeApiClient(),  # type: ignore[arg-type]
+        api_client_override=fake,  # type: ignore[arg-type]
     )
     protocol_app = application.app.app  # type: ignore[attr-defined]
     transport = httpx2.ASGITransport(app=application)
@@ -353,7 +429,7 @@ async def test_real_http_tool_log_reuses_access_request_id_without_body_leak(
                 base_url="http://testserver",
                 headers={
                     "Authorization": f"Bearer {RAW_TOKEN}",
-                    "X-Request-ID": "real-tool-request-1",
+                    "X-Request-ID": RAW_TOKEN,
                 },
             ) as http:
                 client_transport = streamable_http_client(
@@ -372,7 +448,8 @@ async def test_real_http_tool_log_reuses_access_request_id_without_body_leak(
         and record.getMessage() == "tool.completed"
     ]
     assert len(tool_records) == 1
-    assert tool_records[0].request_id == "real-tool-request-1"
+    UUID(tool_records[0].request_id)
+    assert tool_records[0].request_id != RAW_TOKEN
     assert tool_records[0].tool == "list_topics"
     assert tool_records[0].outcome == "success"
     matching_access_records = [
@@ -380,10 +457,24 @@ async def test_real_http_tool_log_reuses_access_request_id_without_body_leak(
         for record in caplog.records
         if record.name == "tickly.mcp.access"
         and record.getMessage() == "request.completed"
-        and getattr(record, "request_id", None) == "real-tool-request-1"
+        and getattr(record, "request_id", None) == tool_records[0].request_id
     ]
     assert matching_access_records
     assert all(record.path == "/mcp" for record in matching_access_records)
+    assert fake.request_ids == [RAW_TOKEN]
+
+    rendered = capsys.readouterr().out
+    _remove_managed_handlers()
+    assert RAW_TOKEN not in rendered
+    assert TOKEN_SHA256 not in rendered
+    assert SENSITIVE_TEXT not in rendered
+    assert INTERNAL_URL not in rendered
+    payloads = [json.loads(line) for line in rendered.splitlines() if line]
+    tool_payloads = [
+        payload for payload in payloads if payload.get("message") == "tool.completed"
+    ]
+    assert len(tool_payloads) == 1
+    assert tool_payloads[0]["request_id"] == tool_records[0].request_id
     assert RAW_TOKEN not in caplog.text
     assert TOKEN_SHA256 not in caplog.text
     assert SENSITIVE_TEXT not in caplog.text
