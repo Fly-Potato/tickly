@@ -2,7 +2,9 @@
 
 ## 推进记录
 
-2026-08-19 已完成阶段 1–3 的本地实现：GHCR 发布 job、Traefik Compose 覆盖、自动检查与部署文档均已写入工作区；全仓检查、GitHub Actions YAML 语法、基础 Compose 与合并 Compose 静态解析已经通过。Docker daemon 启动后，API、MCP、Web 三套镜像均构建成功，镜像默认用户分别为 `tickly`、`tickly-mcp`、`caddy`；独立 `tickly-validation` Compose 项目完成 migration，三个服务均 healthy，经 Caddy 的 `/health`、`/ready`、`/internal/*` 与无 Token `/mcp` smoke 符合预期，随后已删除本轮临时容器、网络和测试 volume。由于本机没有 `pwsh`，扩展后的 PowerShell 检查脚本尚未动态执行。沙箱外 GitHub CLI 已补充 `read:packages`，并确认 `Fly-Potato` 当前没有 Container Package，三个目标包名不存在冲突。代码尚未提交或推送，因此 Actions、镜像发布、Package Public、匿名拉取和真实 Traefik HTTPS 均未发生。
+2026-08-19 已完成阶段 1–4：GHCR 发布 job、Traefik Compose 覆盖、自动检查与部署文档已通过提交 `36675bf` 推送到 `main`。Actions run `32263996471` 先完成全仓检查，再成功发布 API、MCP、Web 三套镜像及来源证明。三个 Package 均关联 `Fly-Potato/tickly` 且为 Public；匿名环境已拉取 `sha-36675bf`，三个 OCI index 均包含 `linux/amd64`、`linux/arm64` 与对应 attestation manifest。三个镜像的 OCI source 均为本仓库，revision 均为 `36675bf47d65d0a2a07829145f102f3220c80a1b`；`gh attestation verify` 在同时约束仓库、`refs/heads/main` 与完整 revision 时均成功。
+
+本地验证也已完成：API、MCP、Web 三套镜像均构建成功，镜像默认用户分别为 `tickly`、`tickly-mcp`、`caddy`；独立 `tickly-validation` Compose 项目完成 migration，三个服务均 healthy，经 Caddy 的 `/health`、`/ready`、`/internal/*` 与无 Token `/mcp` smoke 符合预期，随后已删除本轮临时容器、网络和测试 volume。由于本机没有 `pwsh`，扩展后的 PowerShell 检查脚本尚未动态执行。阶段 5 的真实 Traefik HTTPS 部署和阶段 6 的升级回滚演练仍未开始。
 
 ## 目标
 
