@@ -1,0 +1,35 @@
+services:
+  api:
+    build: !reset null
+    image: ghcr.io/fly-potato/tickly-api:${TICKLY_IMAGE_TAG:?TICKLY_IMAGE_TAG is required}
+    pull_policy: always
+
+  mcp:
+    build: !reset null
+    image: ghcr.io/fly-potato/tickly-mcp:${TICKLY_IMAGE_TAG:?TICKLY_IMAGE_TAG is required}
+    pull_policy: always
+
+  web:
+    build: !reset null
+    image: ghcr.io/fly-potato/tickly-web:${TICKLY_IMAGE_TAG:?TICKLY_IMAGE_TAG is required}
+    pull_policy: always
+    ports: !reset []
+    expose:
+      - "8080"
+    networks:
+      - default
+      - traefik
+    labels:
+      traefik.enable: "true"
+      traefik.docker.network: ${TICKLY_TRAEFIK_NETWORK:?TICKLY_TRAEFIK_NETWORK is required}
+      traefik.http.routers.tickly.rule: Host(`${TICKLY_DOMAIN:?TICKLY_DOMAIN is required}`)
+      traefik.http.routers.tickly.entrypoints: ${TICKLY_TRAEFIK_ENTRYPOINT:?TICKLY_TRAEFIK_ENTRYPOINT is required}
+      traefik.http.routers.tickly.tls: "true"
+      traefik.http.routers.tickly.tls.certresolver: ${TICKLY_TRAEFIK_CERT_RESOLVER:?TICKLY_TRAEFIK_CERT_RESOLVER is required}
+      traefik.http.routers.tickly.service: tickly-web
+      traefik.http.services.tickly-web.loadbalancer.server.port: "8080"
+
+networks:
+  traefik:
+    external: true
+    name: ${TICKLY_TRAEFIK_NETWORK:?TICKLY_TRAEFIK_NETWORK is required}

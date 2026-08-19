@@ -139,6 +139,24 @@ mise exec -- pnpm check
 常用命令：`mise exec -- pnpm docker:build`、`mise exec -- pnpm docker:up`、`mise exec -- pnpm docker:down`。
 Compose 只发布 Web/Caddy 的 `8080` 端口，API 和 MCP 只暴露在 Compose 内网；API、MCP 和 Web 三个运行容器均使用非 root 用户。Caddy 代理 `/api/*` 与 `/mcp`，并在 SPA fallback 前将 `/internal/*` 固定为 `404`。
 
+### GHCR 镜像发布
+
+仓库 CI 在 pull request 中只执行全仓检查；`main` push 或 `v*` tag 必须先通过同一检查，之后才会构建并推送以下发布目标：
+
+- `ghcr.io/fly-potato/tickly-api`
+- `ghcr.io/fly-potato/tickly-mcp`
+- `ghcr.io/fly-potato/tickly-web`
+
+workflow 会为三个镜像构建 `linux/amd64` 与 `linux/arm64` manifest。`main` 生成 `latest` 与 `sha-*`，`v1.2.3` 同时生成 `v1.2.3`、`1.2.3` 与 `sha-*`。生产部署只能选择已经验证的版本或 `sha-*` 标签，不能使用会随主线漂移的 `latest`。
+
+首次由 workflow 创建的 GHCR Package 默认按 Private 处理。确认三个包都关联 `Fly-Potato/tickly`、digest 和来源提交正确后，需要在每个 Package 的设置页分别改为 Public，并从未登录 GHCR 的环境执行匿名 pull。Public 可见性不可恢复为 Private，因此该操作不属于普通 CI 配置变更，也不能因为仓库本身公开就假定镜像已经公开。
+
+矩阵任务不会跨三个 Package 原子提交。部署前必须确认 API、MCP、Web 的目标标签都存在、来源 revision 一致且整个 workflow 成功。
+
+### Traefik 线上部署
+
+根 `compose.yaml` 保留本地构建与容器 smoke；线上通过 `compose.traefik.yaml` 覆盖为 GHCR 镜像。只有 Web/Caddy 加入已有的 Traefik 外部网络，三个服务都不发布宿主机端口。Traefik 负责 TLS 和域名路由，Caddy 继续原样处理 `/api/*`、`/mcp`、`/internal/*` 与 SPA fallback，不要配置 `StripPrefix`。
+
 根 `.env` 至少需要替换以下生产配置：
 
 ```dotenv
@@ -146,6 +164,16 @@ TICKLY_JWT_SECRET=replace-with-at-least-32-random-characters
 TICKLY_MCP_TOKEN_SHA256=replace-with-the-generated-lowercase-sha256
 TICKLY_MCP_ALLOWED_HOSTS=["tickly.example.com"]
 TICKLY_MCP_ALLOWED_ORIGINS=["https://tickly.example.com"]
+```
+
+Traefik 线上部署还需要：
+
+```dotenv
+TICKLY_IMAGE_TAG=v1.0.0
+TICKLY_DOMAIN=tickly.example.com
+TICKLY_TRAEFIK_NETWORK=traefik
+TICKLY_TRAEFIK_ENTRYPOINT=websecure
+TICKLY_TRAEFIK_CERT_RESOLVER=letsencrypt
 ```
 
 不要把原始 `TICKLY_MCP_TOKEN` 写入该文件。`TICKLY_MCP_ALLOWED_HOSTS` 应匹配入口实际传给 MCP 的 `Host`；`TICKLY_MCP_ALLOWED_ORIGINS` 只在请求带 `Origin` 时参与校验，无 `Origin` 的 Codex 请求仍可进入。生产环境不接受空白名单。根 `.env.example` 中的本机 HTTP 值仅用于本地验证。
@@ -161,9 +189,24 @@ curl --fail http://127.0.0.1:8080/ready
 docker compose exec mcp python -c "import os, urllib.request; print(urllib.request.urlopen('http://127.0.0.1:{}/ready'.format(os.environ['TICKLY_MCP_PORT'])).read().decode())"
 ```
 
+使用 Traefik 覆盖文件时，先确认外部网络已经由现有 Traefik 创建，再拉取同一标签的三套镜像、执行 migration 并启动：
+
+```bash
+docker compose -f compose.yaml -f compose.traefik.yaml pull
+docker compose -f compose.yaml -f compose.traefik.yaml run --rm api python -m alembic upgrade head
+docker compose -f compose.yaml -f compose.traefik.yaml up --detach
+docker compose -f compose.yaml -f compose.traefik.yaml ps
+curl --fail https://tickly.example.com/health
+curl --fail https://tickly.example.com/ready
+```
+
+将示例域名替换为 `.env` 中的 `TICKLY_DOMAIN`；Compose 会读取 `.env`，但普通 shell 不会自动把其中变量导出给 `curl`。
+
+升级前备份 SQLite volume，并记录当前 migration revision、镜像标签和 digest。把 `.env` 中的 `TICKLY_IMAGE_TAG` 改为新的已验证版本后，重复 `pull`、migration 与 `up --detach`。应用 smoke 失败时，将标签恢复到上一已知健康版本并重新拉取、启动；若新版本执行了不可逆 migration，应从部署前备份恢复数据库，不能用容器回滚代替数据恢复。
+
 API `/health` 只检查进程，API `/ready` 还检查数据库与 migration。MCP `/health` 只检查进程；MCP `/ready` 要求合法 Token 摘要且 API `/ready` 成功，Compose 使用它作为 MCP 健康检查。公网 Caddy 不暴露 MCP 的探针路径。
 
-当前仓库的 Caddy 仍只监听本机 HTTP `:8080`，Compose 不包含证书或生产 TLS 配置。真实远程 Codex 连接必须由现有可信入口在 Caddy 前终止 TLS，或另行配置域名、证书及 `80/443`；只有 HTTP 时不能视为远程生产就绪。
+Caddy 仍只监听容器内 HTTP `:8080`，证书与生产 TLS 由仓库外已有的 Traefik 实例提供。真实远程 Codex 连接必须通过该可信 HTTPS 入口；仅验证基础 Compose 的本机 HTTP 不能视为远程生产就绪。
 
 轮换 Token 时重新生成原始值与摘要，更新服务器 `TICKLY_MCP_TOKEN_SHA256` 后重建 API/MCP，并让新 Codex 进程读取新的原始值：
 

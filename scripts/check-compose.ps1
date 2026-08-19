@@ -1,7 +1,16 @@
-﻿$ErrorActionPreference = "Stop"
+﻿param(
+    [switch]$Traefik
+)
+
+$ErrorActionPreference = "Stop"
 
 # 解析 Compose 的最终模型，避免只靠文本匹配漏掉环境变量插值或默认值问题。
-$rawConfig = docker compose config --format json
+$composeArguments = @("compose")
+if ($Traefik) {
+    $composeArguments += @("-f", "compose.yaml", "-f", "compose.traefik.yaml")
+}
+$composeArguments += @("config", "--format", "json")
+$rawConfig = & docker @composeArguments
 if ($LASTEXITCODE -ne 0) {
     throw "docker compose config 执行失败"
 }
@@ -14,12 +23,16 @@ foreach ($requiredService in @("api", "mcp", "web")) {
     }
 }
 
-# API 与 MCP 只能通过 Compose 内部网络访问，宿主机入口由 Web/Caddy 独占。
+# API 与 MCP 只能通过 Compose 内部网络访问；基础模式由 Web/Caddy 独占宿主机入口，
+# Traefik 模式则由外部网络接入 Web，三个服务都不得发布宿主机端口。
 if ($null -ne $config.services.api.ports -or $null -ne $config.services.mcp.ports) {
     throw "API 和 MCP 不得发布宿主机端口"
 }
-if ($null -eq $config.services.web.ports) {
+if (-not $Traefik -and $null -eq $config.services.web.ports) {
     throw "Web 必须是唯一发布宿主机端口的服务"
+}
+if ($Traefik -and $null -ne $config.services.web.ports) {
+    throw "Traefik 模式下 Web 不得发布宿主机端口"
 }
 
 # 两个服务必须校验同一原始 Token 的哈希，防止内部转发出现认证配置漂移。
@@ -52,6 +65,81 @@ foreach ($databaseRule in @(
 $mcpDockerfile = Get-Content -Raw (Join-Path $PSScriptRoot "../apps/mcp/Dockerfile")
 if ($mcpDockerfile -match '(?m)^COPY .*--chown=tickly-mcp:tickly-mcp') {
     throw "MCP runtime 文件不得归运行账号所有"
+}
+
+if ($Traefik) {
+    $imageTags = @()
+    foreach ($serviceName in @("api", "mcp", "web")) {
+        $service = $config.services.PSObject.Properties[$serviceName].Value
+        if ($null -ne $service.build) {
+            throw "Traefik 模式下 $serviceName 不得保留本地 build"
+        }
+        $expectedImagePrefix = "ghcr.io/fly-potato/tickly-$serviceName"
+        $imagePattern = "^$([regex]::Escape($expectedImagePrefix)):(?<tag>[^:@]+)$"
+        if ($service.image -notmatch $imagePattern) {
+            throw "Traefik 模式下 $serviceName 必须使用 $expectedImagePrefix 的明确标签"
+        }
+        $imageTags += $Matches["tag"]
+        if ($service.pull_policy -ne "always") {
+            throw "Traefik 模式下 $serviceName 必须在启动前检查目标镜像"
+        }
+    }
+    if (@($imageTags | Select-Object -Unique).Count -ne 1) {
+        throw "Traefik 模式下三个镜像必须使用同一标签"
+    }
+
+    $apiNetworks = @($config.services.api.networks.PSObject.Properties.Name)
+    $mcpNetworks = @($config.services.mcp.networks.PSObject.Properties.Name)
+    $webNetworks = @($config.services.web.networks.PSObject.Properties.Name)
+    if ($apiNetworks.Count -ne 1 -or "default" -notin $apiNetworks) {
+        throw "Traefik 模式下 API 只能加入默认网络"
+    }
+    if ($mcpNetworks.Count -ne 1 -or "default" -notin $mcpNetworks) {
+        throw "Traefik 模式下 MCP 只能加入默认网络"
+    }
+    if ($webNetworks.Count -ne 2 -or "default" -notin $webNetworks -or "traefik" -notin $webNetworks) {
+        throw "Traefik 模式下 Web 必须同时加入默认网络与 Traefik 网络"
+    }
+
+    $traefikNetwork = $config.networks.PSObject.Properties["traefik"].Value
+    if ($null -eq $traefikNetwork -or -not $traefikNetwork.external -or [string]::IsNullOrWhiteSpace($traefikNetwork.name)) {
+        throw "Traefik 网络必须是具有明确名称的外部网络"
+    }
+    if ($null -ne $config.services.api.labels -or $null -ne $config.services.mcp.labels) {
+        throw "API 和 MCP 不得配置 Traefik labels"
+    }
+
+    $labels = $config.services.web.labels
+    $expectedLabels = @{
+        "traefik.enable" = "true"
+        "traefik.http.routers.tickly.tls" = "true"
+        "traefik.http.routers.tickly.service" = "tickly-web"
+        "traefik.http.services.tickly-web.loadbalancer.server.port" = "8080"
+    }
+    foreach ($labelName in $expectedLabels.Keys) {
+        $actualValue = $labels.PSObject.Properties[$labelName].Value
+        if ($actualValue -ne $expectedLabels[$labelName]) {
+            throw "Traefik label 不符合预期：$labelName"
+        }
+    }
+    if ($labels.PSObject.Properties["traefik.docker.network"].Value -ne $traefikNetwork.name) {
+        throw "Traefik label 必须选择 Compose 中声明的外部网络"
+    }
+    $hostRule = $labels.PSObject.Properties["traefik.http.routers.tickly.rule"].Value
+    if ($hostRule -notmatch '^Host\(`[^`]+`\)$') {
+        throw "Traefik router 必须使用单一非空域名的 Host rule"
+    }
+    foreach ($requiredLabel in @(
+        "traefik.http.routers.tickly.entrypoints",
+        "traefik.http.routers.tickly.tls.certresolver"
+    )) {
+        if ([string]::IsNullOrWhiteSpace($labels.PSObject.Properties[$requiredLabel].Value)) {
+            throw "Traefik label 不得为空：$requiredLabel"
+        }
+    }
+
+    Write-Output "Compose Traefik 边界检查通过"
+    exit 0
 }
 
 # 由刚构建的目标 Web 镜像实际解析 Caddyfile；注释和失效 matcher 不会进入语义模型。
