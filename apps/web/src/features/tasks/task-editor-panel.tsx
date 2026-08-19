@@ -200,7 +200,7 @@ export function TaskEditorPanel({
       <Dialog.Portal>
         <Dialog.Backdrop className="task-dialog-backdrop fixed inset-0 z-40 bg-slate-950/30 backdrop-blur-[1px]" />
         <Dialog.Viewport className="task-dialog-viewport fixed inset-0 z-40 flex items-end justify-end">
-          <Dialog.Popup className="task-dialog-popup task-editor-popup max-h-[88svh] w-full overflow-y-auto rounded-t-3xl border border-border bg-card p-6 text-card-foreground shadow-2xl outline-none md:h-full md:max-h-none md:w-[min(32rem,42vw)] md:rounded-none md:rounded-l-3xl md:p-8">
+          <Dialog.Popup className="task-dialog-popup task-editor-popup max-h-[88svh] w-full overflow-y-auto rounded-t-3xl border border-border bg-card p-6 text-card-foreground shadow-2xl outline-none md:h-full md:max-h-none md:w-[min(40rem,50vw)] md:rounded-none md:rounded-l-3xl md:p-8">
             <div className="flex items-start justify-between gap-4">
               <div>
                 <p className="font-mono text-[0.68rem] font-medium tracking-[0.18em] text-blue-600 uppercase">

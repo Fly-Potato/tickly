@@ -72,10 +72,29 @@ export function TaskList({
       {groups.length === 0 ? (
         <div className="task-empty-state">
           <p>{emptyMessages[status]}</p>
-          <span>快速新增会自动出现在符合当前筛选的位置。</span>
+          <span>新建的待办会自动出现在符合当前筛选的位置。</span>
         </div>
       ) : (
-        <div className="task-list">
+        <table className="task-table">
+          <caption className="sr-only">Todo List</caption>
+          <colgroup>
+            <col className="task-table-col-serial" />
+            <col className="task-table-col-task" />
+            <col className="task-table-col-topic" />
+            <col className="task-table-col-priority" />
+            <col className="task-table-col-due" />
+            <col className="task-table-col-status" />
+          </colgroup>
+          <thead className="task-table-head">
+            <tr>
+              <th scope="col">#</th>
+              <th scope="col">待办</th>
+              <th scope="col">主题</th>
+              <th scope="col">优先级</th>
+              <th scope="col">截止时间</th>
+              <th scope="col">状态</th>
+            </tr>
+          </thead>
           {groups.map((group) => (
             <TaskGroupView
               key={group.task.id}
@@ -86,7 +105,7 @@ export function TaskList({
               onStatusChange={onStatusChange}
             />
           ))}
-        </div>
+        </table>
       )}
 
       {error !== null && groups.length > 0 ? (

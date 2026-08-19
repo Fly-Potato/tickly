@@ -1,12 +1,13 @@
-import { CalendarClock } from "lucide-react"
-
 import type { Task, TaskPriority, TaskStatus } from "./task-api"
-import { formatDueLabel, formatTaskTimestamp } from "./task-time"
+import { formatDueLabel } from "./task-time"
 
 type TaskRowProps = {
   task: Task
   timeZone: string
   statusMutating: boolean
+  child?: boolean
+  progress?: { completed: number; total: number }
+  contextOnly?: boolean
   onSelect(task: Task): void
   onStatusChange(task: Task, status: TaskStatus): Promise<void>
 }
@@ -27,6 +28,9 @@ export function TaskRow({
   task,
   timeZone,
   statusMutating,
+  child = false,
+  progress,
+  contextOnly = false,
   onSelect,
   onStatusChange,
 }: TaskRowProps) {
@@ -35,56 +39,64 @@ export function TaskRow({
   const completed = task.status === "completed"
 
   return (
-    <article className="task-row" data-status={task.status}>
-      <button
-        type="button"
-        className="task-row-main"
-        aria-label={`编辑 ${task.title}`}
-        onClick={() => onSelect(task)}
-      >
-        <span className="task-row-serial">#{task.serial}</span>
-        <span
-          className={
-            completed ? "task-row-title line-through" : "task-row-title"
-          }
+    <tr
+      className="task-row"
+      data-status={task.status}
+      data-child={child || undefined}
+    >
+      <td className="task-row-serial">#{task.serial}</td>
+      <td className="task-row-task">
+        <button
+          type="button"
+          className="task-row-main"
+          aria-label={`编辑 ${task.title}`}
+          onClick={() => onSelect(task)}
         >
-          {task.title}
-        </span>
-        <span className="task-topic">{task.topic}</span>
-        <span className="task-row-meta">
-          {priorityLabel !== null ? (
-            <span data-priority={task.priority}>{priorityLabel}</span>
-          ) : null}
-          {task.due_at !== null ? (
-            <span>
-              <CalendarClock aria-hidden="true" />
-              {formatDueLabel(task.due_at, timeZone)}
+          <span
+            className={
+              completed ? "task-row-title line-through" : "task-row-title"
+            }
+          >
+            {task.title}
+          </span>
+          {progress !== undefined ? (
+            <span className="task-row-progress">
+              {progress.completed}/{progress.total} 已完成
             </span>
           ) : null}
-          <span>{formatTaskTimestamp(task.created_at, timeZone, "创建")}</span>
-          {task.completed_at !== null ? (
-            <span>
-              {formatTaskTimestamp(task.completed_at, timeZone, "完成")}
-            </span>
+          {contextOnly ? (
+            <span className="task-context-note">仅用于展示匹配的子待办</span>
           ) : null}
-        </span>
-      </button>
-      <select
-        aria-label={`设置 #${task.serial} 的状态`}
-        value={task.status}
-        disabled={statusMutating}
-        onChange={(event) => {
-          void onStatusChange(task, event.target.value as TaskStatus).catch(
-            () => undefined
-          )
-        }}
+        </button>
+      </td>
+      <td className="task-row-topic">{task.topic}</td>
+      <td
+        className="task-row-priority"
+        data-priority={task.priority ?? undefined}
       >
-        {statusOptions.map((option) => (
-          <option key={option.value} value={option.value}>
-            {option.label}
-          </option>
-        ))}
-      </select>
-    </article>
+        {priorityLabel ?? "—"}
+      </td>
+      <td className="task-row-due">
+        {task.due_at === null ? "—" : formatDueLabel(task.due_at, timeZone)}
+      </td>
+      <td className="task-row-status">
+        <select
+          aria-label={`设置 #${task.serial} 的状态`}
+          value={task.status}
+          disabled={statusMutating}
+          onChange={(event) => {
+            void onStatusChange(task, event.target.value as TaskStatus).catch(
+              () => undefined
+            )
+          }}
+        >
+          {statusOptions.map((option) => (
+            <option key={option.value} value={option.value}>
+              {option.label}
+            </option>
+          ))}
+        </select>
+      </td>
+    </tr>
   )
 }

@@ -1,4 +1,4 @@
-import { LogOut, X } from "lucide-react"
+import { LogOut, Plus, X } from "lucide-react"
 import { useState } from "react"
 
 import { Button } from "@/components/ui/button"
@@ -11,7 +11,7 @@ import {
   type TaskUpdateInput,
 } from "./task-api"
 import { MobileTaskFilterDialog } from "./mobile-task-filter-dialog"
-import { QuickCreateForm } from "./quick-create-form"
+import { TaskCreatePanel } from "./task-create-panel"
 import { TaskEditorPanel } from "./task-editor-panel"
 import { TaskFilterSidebar } from "./task-filter-sidebar"
 import { TaskList } from "./task-list"
@@ -127,6 +127,7 @@ export function TodoWorkspace({
   onLogout,
 }: TodoWorkspaceProps) {
   const { state, actions } = useTaskWorkspace()
+  const [createOpen, setCreateOpen] = useState(false)
   const [editorDirty, setEditorDirty] = useState(false)
   const [editorError, setEditorError] = useState<string | null>(null)
   const selectedTask =
@@ -225,28 +226,31 @@ export function TodoWorkspace({
             onReset={() => actions.applyQuery({ ...DEFAULT_TASK_QUERY })}
           />
           <section className="task-list-content" aria-label="Todo List">
-            <div className="task-list-heading">
-              <div>
-                <p className="auth-card-index">Todo list</p>
-                <h1 id="workspace-title">今天要完成什么？</h1>
+            <div className="task-list-toolbar">
+              <h1 id="workspace-title" className="auth-card-index">
+                Todo list
+              </h1>
+              <div className="task-list-toolbar-actions">
+                <MobileTaskFilterDialog
+                  query={state.query}
+                  topics={state.topics}
+                  disabled={state.initialLoading}
+                  topicLoading={state.topicLoading}
+                  topicError={state.topicError}
+                  onRetryTopics={actions.retryTopics}
+                  onApply={actions.applyQuery}
+                />
+                <Button
+                  type="button"
+                  disabled={state.creating}
+                  onClick={() => setCreateOpen(true)}
+                >
+                  <Plus aria-hidden="true" />
+                  新建待办
+                </Button>
               </div>
-              <MobileTaskFilterDialog
-                query={state.query}
-                topics={state.topics}
-                disabled={state.initialLoading}
-                topicLoading={state.topicLoading}
-                topicError={state.topicError}
-                onRetryTopics={actions.retryTopics}
-                onApply={actions.applyQuery}
-              />
             </div>
 
-            <QuickCreateForm
-              creating={state.creating}
-              selectedTopic={state.query.topic}
-              topicOptions={state.topics}
-              onCreate={actions.create}
-            />
             <ActiveFilterSummary
               status={state.query.status}
               topic={state.query.topic}
@@ -270,6 +274,17 @@ export function TodoWorkspace({
           </section>
         </div>
       </section>
+
+      {createOpen ? (
+        <TaskCreatePanel
+          selectedTopic={state.query.topic}
+          topicOptions={state.topics}
+          timeZone={timeZone}
+          creating={state.creating}
+          onCreate={actions.create}
+          onClose={() => setCreateOpen(false)}
+        />
+      ) : null}
 
       {selectedTask !== null ? (
         <TaskEditorPanel

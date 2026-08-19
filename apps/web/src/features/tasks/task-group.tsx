@@ -16,7 +16,6 @@ export function TaskGroupView({
   onSelect,
   onStatusChange,
 }: TaskGroupViewProps) {
-  const serial = group.task.serial
   const rowProps = {
     timeZone,
     onSelect,
@@ -24,36 +23,33 @@ export function TaskGroupView({
   }
 
   return (
-    <article
+    <tbody
       className="task-group"
       data-context-only={group.context_only || undefined}
     >
       <TaskRow
         task={group.task}
         statusMutating={statusMutatingTaskIds.has(group.task.id)}
+        progress={
+          group.child_count > 0
+            ? {
+                completed: group.completed_child_count,
+                total: group.child_count,
+              }
+            : undefined
+        }
+        contextOnly={group.context_only}
         {...rowProps}
       />
-      {group.context_only ? (
-        <p className="task-context-note">仅用于展示匹配的子待办</p>
-      ) : null}
-      {group.children.length > 0 ? (
-        <div className="child-task-section">
-          <p>
-            子待办 {group.completed_child_count}/{group.child_count} 已完成
-          </p>
-          <ul aria-label={`#${serial} 的子待办`}>
-            {group.children.map((child) => (
-              <li key={child.id}>
-                <TaskRow
-                  task={child}
-                  statusMutating={statusMutatingTaskIds.has(child.id)}
-                  {...rowProps}
-                />
-              </li>
-            ))}
-          </ul>
-        </div>
-      ) : null}
-    </article>
+      {group.children.map((child) => (
+        <TaskRow
+          key={child.id}
+          task={child}
+          child
+          statusMutating={statusMutatingTaskIds.has(child.id)}
+          {...rowProps}
+        />
+      ))}
+    </tbody>
   )
 }

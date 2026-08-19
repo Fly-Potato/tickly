@@ -28,7 +28,6 @@ vi.mock("./task-api", async (importOriginal) => ({
 
 import { TodoWorkspace } from "./todo-workspace"
 import { MobileTaskFilterDialog } from "./mobile-task-filter-dialog"
-import { QuickCreateForm } from "./quick-create-form"
 import { TaskFilterSidebar } from "./task-filter-sidebar"
 import { TaskList } from "./task-list"
 
@@ -183,24 +182,25 @@ describe("Todo 工作区", () => {
     const { onLogout } = renderWorkspace()
 
     expect(
-      await screen.findByRole("heading", { name: "今天要完成什么？" })
+      await screen.findByRole("heading", { name: "Todo list" })
     ).toBeInTheDocument()
     expect(screen.getByText("potato")).toBeInTheDocument()
     expect(screen.getByText("Asia/Shanghai")).toBeInTheDocument()
     expect(screen.getByText("高优先级")).toBeInTheDocument()
     expect(screen.getByText("#18")).toBeInTheDocument()
-    expect(screen.getByText("子待办 1/2 已完成")).toBeInTheDocument()
-    expect(
-      screen.getByRole("list", { name: "#18 的子待办" })
-    ).toBeInTheDocument()
+    expect(screen.getByText("1/2 已完成")).toBeInTheDocument()
+    expect(screen.getByRole("row", { name: /补充回归测试/ })).toHaveAttribute(
+      "data-child",
+      "true"
+    )
     expect(
       screen.getByRole("combobox", { name: "设置 #18 的状态" })
     ).toHaveValue("new")
     expect(
       screen.getByRole("combobox", { name: "设置 #19 的状态" })
     ).toHaveValue("completed")
-    expect(screen.getByText("创建 · 8月17日 16:30")).toBeInTheDocument()
-    expect(screen.getByText("完成 · 8月17日 17:45")).toBeInTheDocument()
+    expect(screen.queryByText("创建 · 8月17日 16:30")).not.toBeInTheDocument()
+    expect(screen.queryByText("完成 · 8月17日 17:45")).not.toBeInTheDocument()
     expect(screen.getByText("补充回归测试")).toHaveClass("line-through")
     expect(screen.getByText("#18").closest(".task-group")).toHaveAttribute(
       "data-context-only",
@@ -241,7 +241,7 @@ describe("Todo 工作区", () => {
     ).toBeInTheDocument()
   })
 
-  it("全部主题下标题和主题必填，成功提交规范化内容并保留主题", async () => {
+  it("通过新建抽屉校验必填项并提交规范化内容", async () => {
     const created = makeTask("created", {
       serial: 20,
       title: "阶段 4",
@@ -257,31 +257,40 @@ describe("Todo 工作区", () => {
     tasks.createTask.mockReturnValueOnce(creation.promise)
     const user = userEvent.setup()
     renderWorkspace()
-    const titleInput = await screen.findByLabelText("任务标题")
-    const topicInput = screen.getByLabelText("任务主题")
-    const submit = screen.getByRole("button", { name: "添加任务" })
+    expect(
+      await screen.findByText("还没有任务，先写下第一件事。")
+    ).toBeInTheDocument()
+    expect(screen.queryByLabelText("任务标题")).not.toBeInTheDocument()
 
-    expect(titleInput).toHaveValue("")
-    expect(topicInput).toHaveValue("")
-    expect(topicInput).toHaveAttribute("list", "task-topic-options")
-    expect(submit).toBeDisabled()
+    await user.click(screen.getByRole("button", { name: "新建待办" }))
+    const dialog = screen.getByRole("dialog", { name: "新建待办" })
+    const titleInput = within(dialog).getByLabelText("标题")
+    const topicInput = within(dialog).getByLabelText("主题")
+    const submit = within(dialog).getByRole("button", { name: "创建待办" })
 
     await user.type(titleInput, "  阶段 4  ")
-    expect(submit).toBeDisabled()
-    await user.type(topicInput, "  Tickly  {Enter}")
+    await user.click(submit)
+    expect(within(dialog).getByText("主题不能为空")).toBeInTheDocument()
+    expect(tasks.createTask).not.toHaveBeenCalled()
+
+    await user.type(topicInput, "  Tickly  ")
+    await user.click(submit)
 
     expect(tasks.createTask).toHaveBeenCalledWith({
       title: "阶段 4",
       topic: "Tickly",
     })
+    expect(submit).toHaveTextContent("正在创建")
     expect(titleInput).toBeDisabled()
-    expect(topicInput).toBeDisabled()
     await act(async () => {
       creation.resolve(created)
       await creation.promise
     })
-    await waitFor(() => expect(titleInput).toHaveValue(""))
-    expect(topicInput).toHaveValue("Tickly")
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("dialog", { name: "新建待办" })
+      ).not.toBeInTheDocument()
+    )
     expect(await screen.findByText("阶段 4")).toBeInTheDocument()
   })
 
@@ -381,7 +390,7 @@ describe("Todo 工作区", () => {
     ).toBeInTheDocument()
     expect(title).toHaveValue("")
     expect(topic).toHaveValue("工作")
-    expect(screen.getByText("子待办 0/3 已完成")).toBeInTheDocument()
+    expect(screen.getByText("0/3 已完成")).toBeInTheDocument()
     expect(
       screen.getByRole("button", { name: "编辑 分页子任务", hidden: true })
     ).toBeInTheDocument()
@@ -518,13 +527,19 @@ describe("Todo 工作区", () => {
     tasks.createTask.mockRejectedValue(new Error("secret network detail"))
     const user = userEvent.setup()
     renderWorkspace()
-    const titleInput = await screen.findByLabelText("任务标题")
-    const topicInput = screen.getByLabelText("任务主题")
+    await screen.findByText("还没有任务，先写下第一件事。")
+    await user.click(screen.getByRole("button", { name: "新建待办" }))
+    const dialog = screen.getByRole("dialog", { name: "新建待办" })
+    const titleInput = within(dialog).getByLabelText("标题")
+    const topicInput = within(dialog).getByLabelText("主题")
 
     await user.type(titleInput, "保留标题")
-    await user.type(topicInput, "工作{Enter}")
+    await user.type(topicInput, "工作")
+    await user.click(within(dialog).getByRole("button", { name: "创建待办" }))
 
-    expect(await screen.findByRole("alert")).toHaveTextContent("任务创建失败")
+    expect(await within(dialog).findByRole("alert")).toHaveTextContent(
+      "任务创建失败"
+    )
     expect(titleInput).toHaveValue("保留标题")
     expect(topicInput).toHaveValue("工作")
     expect(screen.queryByText(/secret/)).not.toBeInTheDocument()
@@ -643,55 +658,7 @@ describe("Todo 工作区", () => {
   })
 })
 
-describe("Task4 快速创建和列表契约", () => {
-  it("selectedTopic 仅同步空值或上一选择，不覆盖自定义主题", async () => {
-    const onCreate = vi.fn().mockResolvedValue(undefined)
-    const user = userEvent.setup()
-    const { rerender } = render(
-      <QuickCreateForm
-        creating={false}
-        selectedTopic="Tickly"
-        topicOptions={["Tickly", "工作"]}
-        onCreate={onCreate}
-      />
-    )
-    const topicInput = screen.getByLabelText("任务主题")
-
-    expect(topicInput).toHaveValue("Tickly")
-    rerender(
-      <QuickCreateForm
-        creating={false}
-        selectedTopic="工作"
-        topicOptions={["Tickly", "工作"]}
-        onCreate={onCreate}
-      />
-    )
-    await waitFor(() => expect(topicInput).toHaveValue("工作"))
-
-    await user.clear(topicInput)
-    await user.type(topicInput, "个人")
-    rerender(
-      <QuickCreateForm
-        creating={false}
-        selectedTopic="Tickly"
-        topicOptions={["Tickly", "工作"]}
-        onCreate={onCreate}
-      />
-    )
-    expect(topicInput).toHaveValue("个人")
-
-    await user.clear(topicInput)
-    rerender(
-      <QuickCreateForm
-        creating={false}
-        selectedTopic="工作"
-        topicOptions={["Tickly", "工作"]}
-        onCreate={onCreate}
-      />
-    )
-    await waitFor(() => expect(topicInput).toHaveValue("工作"))
-  })
-
+describe("Task4 列表契约", () => {
   it("首次加载继续提供可读状态提示", () => {
     render(
       <TaskList

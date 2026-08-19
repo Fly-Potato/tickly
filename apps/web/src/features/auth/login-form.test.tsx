@@ -131,7 +131,7 @@ describe("App 认证状态门", () => {
     expect(screen.getByText("potato")).toBeInTheDocument()
     expect(screen.getByText("Asia/Shanghai")).toBeInTheDocument()
     expect(
-      screen.getByRole("heading", { name: "今天要完成什么？" }),
+      screen.getByRole("heading", { name: "Todo list" }),
     ).toBeInTheDocument()
     await user.click(screen.getByRole("button", { name: "退出登录" }))
     expect(auth.logout).toHaveBeenCalledOnce()
