@@ -1,0 +1,23 @@
+{
+  "skill_name": "tickly-todo-mcp",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "把一个新任务加到‘工作’主题下，并作为‘发布首页’的子任务。",
+      "expected_output": "在主题和父任务不明确或任务内容缺失时先询问；确认后使用 create_task 的 parent_serial。",
+      "files": []
+    },
+    {
+      "id": 2,
+      "prompt": "把所有逾期且未完成的任务标为进行中。",
+      "expected_output": "完整分页读取目标，汇总范围后使用 set_task_status 逐项修改，并分别报告成功和失败。",
+      "files": []
+    },
+    {
+      "id": 3,
+      "prompt": "删除任务 #42。",
+      "expected_output": "说明 Tickly MCP 没有删除工具，不执行伪删除；替代方案必须得到明确同意。",
+      "files": []
+    }
+  ]
+}

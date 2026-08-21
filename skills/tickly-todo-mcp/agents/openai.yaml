@@ -1,0 +1,4 @@
+interface:
+  display_name: "Tickly Todo MCP"
+  short_description: "通过 Tickly MCP 安全管理 Todo 任务"
+  default_prompt: "使用 $tickly-todo-mcp 通过 Tickly MCP 管理 Todo；先确认任务 serial、主题和父任务，批量写入前汇总并确认，严格遵守工具能力边界。"

@@ -1,0 +1,68 @@
+---
+name: tickly-todo-mcp
+description: Use when the user asks to read, create, update, complete, organize, or otherwise manage Tickly Todo tasks through Tickly MCP tools, including requests involving topics, parent tasks, statuses, deadlines, or bulk changes.
+---
+
+# Tickly Todo MCP
+
+通过 Tickly MCP 管理 Todo 时，优先保证任务身份、范围和变更结果准确；不要为了完成一句自然语言请求而猜测缺失信息或越过 MCP 能力边界。
+
+## 适用范围
+
+- 用户要求查询、创建、更新、完成或整理 Tickly Todo。
+- 用户提到主题、父任务、状态、截止时间、任务流水号或批量修改。
+- 不适用于普通聊天、纯本地文件操作或与 Tickly Todo 无关的 MCP。
+
+## 核心约束
+
+1. 先读取当前 Tickly MCP 的实时工具 schema；不要假定工具参数永远不变。
+2. 用户可见的任务身份使用账号内 `serial`（例如 `#42`），不要把数据库 `id` 当作任务编号。
+3. 信息不足时先追问。尤其不要擅自生成任务标题/描述、选择不明确的父任务，或猜测主题。
+4. 主题不确定时先调用 `list_topics`；父任务不确定时用 `find_parent_tasks`，确认唯一候选后再写入。
+5. 创建子任务使用 `create_task` 的 `parent_serial`，不要把父子关系写进描述文本。
+6. 普通字段修改使用 `update_task`；状态修改只使用 `set_task_status`，状态值使用 schema 中的枚举。
+7. 查询返回 `next_cursor` 时持续分页，直到满足用户范围；不能只处理第一页后声称“全部”。
+8. 批量写入前先汇总目标数量和 serial，并在会产生写入时请求一次确认。逐项记录成功与失败；有失败时不得报告为全部成功。
+9. Tickly MCP 没有删除工具。删除请求应明确说明无法执行，不得用清空内容、改状态或访问内部 API/数据库模拟删除；替代方案需用户明确同意。
+10. 写操作完成后重新读取或使用工具返回值核对结果，并报告实际变更的 serial。
+
+## 推荐流程
+
+### 查询
+
+选择最窄的只读工具：
+
+| 目的 | 工具 |
+| --- | --- |
+| 列表、筛选、排序 | `list_tasks` |
+| 单个任务及直接子任务 | `get_task` |
+| 当前账号的精确主题值 | `list_topics` |
+| 查找可作为父任务的根任务 | `find_parent_tasks` |
+
+保留并消费 `next_cursor`。如果用户使用模糊名称，返回候选并请求确认，不要默认选第一项。
+
+### 创建或更新
+
+1. 解析用户明确提供的标题、描述、主题、截止时间和父任务。
+2. 缺少必需信息或存在多个候选时先询问。
+3. 写入前说明目标和范围；批量操作尤其要说明数量。
+4. 创建用 `create_task`，普通字段用 `update_task`，状态用 `set_task_status`。
+5. 记录每项结果；不要把工具错误包装成成功。
+
+截止时间遵循实时 schema；当前 Tickly MCP 通常要求 RFC3339 date-time 字符串，不要自行传 Unix timestamp。
+
+### 批量修改
+
+先完整读取目标集合，再展开每个根任务组中的直接子任务，按 serial 去重后确定目标集合。跳过已经满足目标状态的任务；遇到单项失败继续处理其余项，但最终分别列出成功和失败。
+
+“逾期”等条件必须依据返回的截止时间和账号时区判断；如果时区或边界不明确，先说明假设或询问用户。
+
+### 删除或超出能力边界的请求
+
+先确认当前工具列表没有相应能力，然后直接说明不能执行。不得调用不存在的工具、伪造删除结果，或建议绕过 MCP 的内部 API/SQLite。
+
+## 输出要求
+
+- 简短说明使用的 Tickly 工具和实际结果。
+- 写操作至少报告 serial、成功/失败数量；批量操作给出失败项及原因。
+- 无法执行时说明具体能力边界，并给出需要用户确认的安全替代方案。

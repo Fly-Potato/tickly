@@ -1,6 +1,12 @@
 {
   "version": 1,
   "skills": {
+    "tickly-todo-mcp": {
+      "source": "Fly-Potato/tickly",
+      "sourceType": "github",
+      "skillPath": "skills/tickly-todo-mcp/SKILL.md",
+      "computedHash": "1414BEBC7220A7906F6B31E2E2CD69717FD5793941CC1277D8EC47467B5EC412"
+    },
     "curating-repository-knowledge": {
       "source": "Fly-Potato/agent-skills",
       "sourceType": "github",
