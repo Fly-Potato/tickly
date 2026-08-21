@@ -6,6 +6,8 @@
 
 本地验证也已完成：API、MCP、Web 三套镜像均构建成功，镜像默认用户分别为 `tickly`、`tickly-mcp`、`caddy`；独立 `tickly-validation` Compose 项目完成 migration，三个服务均 healthy，经 Caddy 的 `/health`、`/ready`、`/internal/*` 与无 Token `/mcp` smoke 符合预期，随后已删除本轮临时容器、网络和测试 volume。由于本机没有 `pwsh`，扩展后的 PowerShell 检查脚本尚未动态执行。阶段 5 的真实 Traefik HTTPS 部署和阶段 6 的升级回滚演练仍未开始。
 
+2026-08-21 生产就绪审计：当前版本属于生产候选，不应描述为完整生产就绪。阶段 1–4 的发布链路证据已具备；阶段 5 的真实 Traefik HTTPS、认证与 MCP 运行时 smoke，以及阶段 6 的升级、备份、恢复和回滚演练仍是上线前硬门禁。当前部署边界是单 VPS、单 API 进程、SQLite 单写实例；低流量单实例可接受，但不提供高可用或横向扩展。Compose 未声明容器自动重启策略，必须在上线前补充明确策略或由外部 supervisor 承担并完成故障恢复验证。
+
 ## 目标
 
 在不改变 Tickly 现有 Web/API/MCP 业务契约的前提下，建立一条可重复、可追溯的容器发布与单 VPS 部署链路：
@@ -35,7 +37,7 @@
 
 ## 当前基线
 
-截至 2026-08-19，仓库已经具备：
+截至 2026-08-21，仓库已经具备：
 
 - `.github/workflows/ci.yml`：PR 与 `main` push 时运行全仓检查，第三方 Actions 固定到 commit SHA。
 - `apps/api/Dockerfile`：构建 API 生产镜像，运行身份为非 root，包含 Alembic migration 文件。
@@ -43,23 +45,25 @@
 - `apps/web/Dockerfile`：构建 React 静态资源，并由非 root Caddy 在 `8080` 提供服务。
 - `apps/web/Caddyfile`：依次阻断 `/internal/*`、转发 `/mcp`、转发 `/api/*`，最后进入 SPA fallback。
 - `compose.yaml`：本地构建三个镜像，仅将 Web/Caddy 的 `8080` 发布到宿主机；API 和 MCP 只在 Compose 网络暴露。
+- `compose.traefik.yaml`：线上使用 GHCR 镜像，Web 接入 Traefik 外部网络，三个服务不发布宿主机端口，并通过 labels 明确 HTTPS router 与 Web 容器端口。
+- `.github/workflows/ci.yml`：全仓检查通过后发布 API、MCP、Web 三套多架构镜像，并生成 provenance attestation。
 - `.dockerignore`：排除 `.env`、私钥、数据库、虚拟环境、缓存、测试和文档等不应进入镜像的内容。
 - `scripts/check-compose.ps1`：检查 Compose 服务边界、共享 MCP Token 摘要、依赖顺序、Caddy 路由顺序和非 root 文件所有权约束。
 
 当前尚未具备：
 
-- GHCR 镜像发布 job。
-- `main`/版本 tag 到容器标签的稳定映射。
-- 镜像构建 provenance attestation。
-- Traefik Compose 覆盖文件与对应静态检查。
-- 三个 GHCR Package 的 Public 可见性与匿名拉取验证。
-- 真实 Traefik HTTPS 入口下的 Web/API/MCP smoke 记录。
+- 真实 Traefik HTTPS 入口下的 Web、认证、API 与 MCP smoke 记录。
+- 升级前 SQLite 备份、恢复到新 volume、应用回滚和数据库恢复的演练记录。
+- Compose 自身的自动重启策略，或外部 supervisor 的故障恢复责任、配置和演练证据。
+- 面向生产的外部监控、告警和备份保留策略；结构化日志与 health/readiness 只提供基础信号。
 
 实施前置状态需要重新核对：
 
-- 2026-08-19 后续在沙箱外为 `gh` 补充 `read:packages` 后，Package 列表请求成功并返回空列表；`tickly-api`、`tickly-mcp`、`tickly-web` 当前均不存在名称冲突。`Fly-Potato/tickly` 已确认为 Public 仓库，默认分支为 `main`，GitHub Actions 已启用且允许全部 Actions。
-- 2026-08-19 后续已启动 Docker daemon，三镜像构建与基础 Compose 容器 smoke 通过；真实多架构 Actions 构建和 Traefik HTTPS smoke 仍需远端验证。
-- Traefik 现有外部网络名、HTTPS entrypoint 名和证书 resolver 名尚未写死到仓库，必须通过部署变量注入。
+- 2026-08-19 的 Actions run `32263996471` 已完成三套镜像发布、Public 可见性、匿名拉取、multi-arch manifest 和 attestation 验收；后续部署仍必须逐次核对三个目标标签的 digest、source revision 和 workflow 整体成功状态。
+- 合并后的基础 Compose 与 Traefik Compose 模型、Traefik labels 和服务边界检查已通过；真实 Traefik HTTPS smoke 仍需在目标 VPS 执行。
+- Traefik 外部网络名、HTTPS entrypoint 名和证书 resolver 名通过部署变量注入；目标服务器必须先确认这些外部资源实际存在。
+- 当前两个 Compose 文件没有 `restart` 配置；若不引入 Compose 重启策略，必须明确由 systemd 或其他 supervisor 接管并验证进程崩溃、主机重启后的恢复。
+- SQLite 继续限定为单 API 实例和单 VPS 数据卷；任何多副本、高并发或高可用目标都必须先迁移到适合的外部数据库并重新设计部署边界。
 
 ## 目标架构
 
@@ -229,7 +233,7 @@ TICKLY_TRAEFIK_CERT_RESOLVER=letsencrypt
 - `docker buildx imagetools inspect` 显示 amd64/arm64 manifest。
 - 三个 digest 与同一源 commit 对应。
 
-### 阶段 5：真实 Traefik 部署与运行时 smoke
+### 阶段 5：真实 Traefik 部署与运行时 smoke（未完成）
 
 目标：证明公开镜像、Compose 合并、Traefik、Caddy、API 与 MCP 在真实 HTTPS 入口形成完整闭环。
 
@@ -255,7 +259,7 @@ TICKLY_TRAEFIK_CERT_RESOLVER=letsencrypt
 - API、MCP、Web 三个运行容器均为非 root。
 - 宿主机不暴露 `8080`、`8321` 或 `8322`。
 
-### 阶段 6：升级与回滚演练
+### 阶段 6：升级与回滚演练（未完成）
 
 目标：证明发布链路不仅能首次启动，也能安全升级和回滚。
 
