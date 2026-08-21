@@ -126,6 +126,8 @@ codex mcp add tickly --url https://tickly.example.com/mcp --bearer-token-env-var
 
 将示例域名替换为真实可信 HTTPS 入口。当前 Codex CLI 的 `--env` 只适用于 stdio server；远程 Bearer Token 应使用 `--bearer-token-env-var`，且启动 Codex 的进程必须能读取该环境变量。连接后先执行只读工具 smoke，再按 Codex 的写操作审批策略验证写工具。
 
+完整的 Token 生成、Codex 配置、环境变量错误排查和最小验收步骤见：[MCP 客户端接入与部署说明](docs/mcp-client-deployment.md)。
+
 ## 检查
 
 ```bash
