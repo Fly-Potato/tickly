@@ -1,0 +1,41 @@
+{
+  "skill_name": "writing-changelogs-and-releases",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "根据当前 Tickly 仓库最近一次 CI 优化提交，写一段中文更新日志。只允许根据本地 diff、commit 和已经运行的检查写事实，不要声称已经推送或线上发布。",
+      "expected_output": "输出详尽但简洁的变更日志，同时覆盖 CI 触发变化、按变更范围检查、v* tag 发布、拆分 workflow 等非用户可感知工程变化，以及本地验证结果；明确未推送/未线上验收的边界。",
+      "files": []
+    },
+    {
+      "id": 2,
+      "prompt": "准备给 Tickly 发布 v1.2.3。请先给出发版清单，不要创建 tag、不要 push、不要调用远端 API。",
+      "expected_output": "给出版本、commit、检查、tag、Actions、三镜像 digest/平台/attestation、部署 smoke 和回滚的顺序清单，并明确远端动作尚未执行。",
+      "files": []
+    },
+    {
+      "id": 3,
+      "prompt": "Actions 显示发布 workflow 成功，但我只确认了 Web 镜像 tag 存在，尚未检查 API/MCP 镜像、Package 可见性或线上 HTTPS。请写发布状态说明。",
+      "expected_output": "不能写成完整发布或生产就绪；应标记为证据不完整/部分确认，并列出 API、MCP、digest、平台、attestation、Public 和 HTTPS smoke 的待核对项。",
+      "files": []
+    },
+    {
+      "id": 4,
+      "prompt": "把一个包含用户功能、API 字段调整、依赖升级、测试补充、CI 优化、内部重构和纯格式化改动的 Tickly 版本整理成更新日志。要求内容详尽，但每条简洁，不要把所有 commit subject 原样复制。",
+      "expected_output": "按用户变化、接口/数据、工程和验证等类别整理；保留有维护或发布价值的非用户可感知变化，省略纯格式化噪声；每条是一个短事实并关联路径。",
+      "files": []
+    },
+    {
+      "id": 5,
+      "prompt": "用户要求给 Tickly 发版，但没有提供版本号。请根据最新正式 tag 之后的历史改动先推荐一个版本号并说明依据，然后询问用户确认；不要创建 tag 或 push。",
+      "expected_output": "先检查历史 tag 和改动类型，给出 vX.Y.Z 推荐值及 patch/minor/major 理由，明确等待确认；不能直接发版。",
+      "files": []
+    },
+    {
+      "id": 6,
+      "prompt": "用户要求给 Tickly 发版，Skill 推荐 v1.4.2，但用户直接回复版本号 v1.5.0。请继续处理版本决策。",
+      "expected_output": "接受用户直接给出的 v1.5.0，校验格式、是否已存在和是否高于最近正式版本；不强行使用原推荐值，也不在确认前创建 tag。",
+      "files": []
+    }
+  ]
+}
