@@ -143,13 +143,13 @@ Compose 只发布 Web/Caddy 的 `8080` 端口，API 和 MCP 只暴露在 Compose
 
 ### GHCR 镜像发布
 
-仓库 CI 在 pull request 中只执行全仓检查；`main` push 或 `v*` tag 必须先通过同一检查，之后才会构建并推送以下发布目标：
+仓库 CI 会根据变更范围执行 Web、API 或 MCP 的目标检查；文档变更不启动应用测试。普通 `main` push 只执行检查，只有推送 `v*` tag 时才会构建并推送以下发布目标：
 
 - `ghcr.io/fly-potato/tickly-api`
 - `ghcr.io/fly-potato/tickly-mcp`
 - `ghcr.io/fly-potato/tickly-web`
 
-workflow 会为三个镜像构建 `linux/amd64` 与 `linux/arm64` manifest。`main` 生成 `latest` 与 `sha-*`，`v1.2.3` 同时生成 `v1.2.3`、`1.2.3` 与 `sha-*`。生产部署只能选择已经验证的版本或 `sha-*` 标签，不能使用会随主线漂移的 `latest`。
+发布 workflow 会为三个镜像构建 `linux/amd64` 与 `linux/arm64` manifest。`v1.2.3` 同时生成 `v1.2.3`、`1.2.3` 与 `sha-*`。生产部署只能选择已经验证的版本或 `sha-*` 标签，不能使用会随主线漂移的 `latest`。
 
 首次由 workflow 创建的 GHCR Package 默认按 Private 处理。确认三个包都关联 `Fly-Potato/tickly`、digest 和来源提交正确后，需要在每个 Package 的设置页分别改为 Public，并从未登录 GHCR 的环境执行匿名 pull。Public 可见性不可恢复为 Private，因此该操作不属于普通 CI 配置变更，也不能因为仓库本身公开就假定镜像已经公开。
 
