@@ -1,6 +1,6 @@
-# Tickly VPS 部署说明
+# Tickly VPS 部署与运行维护
 
-本文说明如何在单台 VPS 上部署 Tickly 的 API、MCP 和 Web 服务。线上使用 GHCR 预构建镜像，Traefik 负责公网 HTTPS，Web/Caddy 负责同源路由。
+本文说明如何在单台 VPS 上部署和维护 Tickly 的 API、MCP 和 Web 服务。线上使用 GHCR 预构建镜像，Traefik 负责公网 HTTPS，Web/Caddy 负责同源路由。镜像发布规则见 [镜像发布说明](release.md)，MCP 客户端配置见 [MCP 客户端说明](mcp.md)。
 
 ## 部署边界
 
