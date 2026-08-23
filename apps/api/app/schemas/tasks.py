@@ -146,6 +146,7 @@ class TaskListQuery(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     status: TaskStatusFilter = TaskStatusFilter.ALL
+    query: str | None = Field(default=None, max_length=200)
     topic: str | None = Field(default=None, max_length=100)
     sort: TaskSort = TaskSort.CREATED_AT
     order: SortOrder = SortOrder.DESC
@@ -155,6 +156,11 @@ class TaskListQuery(BaseModel):
     @field_validator("topic", mode="before")
     @classmethod
     def normalize_topic(cls, value: object) -> object:
+        return _empty_text_to_none(value)
+
+    @field_validator("query", mode="before")
+    @classmethod
+    def normalize_query(cls, value: object) -> object:
         return _empty_text_to_none(value)
 
 

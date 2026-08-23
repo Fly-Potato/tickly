@@ -32,6 +32,7 @@ export type TaskFilterControlsProps = {
   topicDisabled?: boolean
   topicFeedback?: ReactNode
   onStatusChange(status: TaskStatusFilter): void
+  onQueryChange?(query: string): void
   onTopicChange(topic: string | undefined): void
   onSortChange(sort: TaskSort): void
   onOrderChange(order: SortOrder): void
@@ -44,6 +45,7 @@ export function TaskFilterControls({
   topicDisabled = false,
   topicFeedback,
   onStatusChange,
+  onQueryChange,
   onTopicChange,
   onSortChange,
   onOrderChange,
@@ -52,6 +54,18 @@ export function TaskFilterControls({
 
   return (
     <div className="task-filter-controls">
+      <fieldset className="task-filter-section" disabled={disabled}>
+        <legend className="text-sm font-semibold">检索</legend>
+        <input
+          className="h-11 rounded-xl border border-input bg-background px-3 outline-none focus:border-ring focus:ring-3 focus:ring-ring/20"
+          type="search"
+          value={query.query ?? ""}
+          placeholder="搜索主题、标题或描述"
+          aria-label="搜索任务"
+          onChange={(event) => onQueryChange?.(event.target.value)}
+        />
+      </fieldset>
+
       <fieldset className="task-filter-section" disabled={disabled}>
         <legend className="text-sm font-semibold">状态</legend>
         <div className="task-filter-options">

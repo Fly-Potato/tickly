@@ -203,6 +203,7 @@ def test_list_query_normalizes_topic_and_keeps_pagination_and_sorting() -> None:
     query = TaskListQuery.model_validate(
         {
             "status": "in_progress",
+            "query": "  deploy  ",
             "topic": "  Tickly  ",
             "sort": "serial",
             "order": "asc",
@@ -212,6 +213,7 @@ def test_list_query_normalizes_topic_and_keeps_pagination_and_sorting() -> None:
     )
 
     assert query.status is TaskStatusFilter.IN_PROGRESS
+    assert query.query == "deploy"
     assert query.topic == "Tickly"
     assert query.sort is TaskSort.SERIAL
     assert query.order is SortOrder.ASC
@@ -224,6 +226,7 @@ def test_list_query_has_stable_defaults_and_normalizes_blank_topic() -> None:
 
     assert query.status is TaskStatusFilter.ALL
     assert query.topic is None
+    assert query.query is None
     assert query.sort is TaskSort.CREATED_AT
     assert query.order is SortOrder.DESC
     assert query.cursor is None

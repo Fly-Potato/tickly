@@ -1,5 +1,5 @@
 import { LogOut, Plus, X } from "lucide-react"
-import { useState } from "react"
+import { useEffect, useState } from "react"
 
 import { Button } from "@/components/ui/button"
 import { safeErrorMessage } from "@/lib/api-error"
@@ -127,6 +127,19 @@ export function TodoWorkspace({
   onLogout,
 }: TodoWorkspaceProps) {
   const { state, actions } = useTaskWorkspace()
+  useEffect(() => {
+    const params = new URLSearchParams()
+    if (state.query.query !== undefined) params.set("query", state.query.query)
+    if (state.query.topic !== undefined) params.set("topic", state.query.topic)
+    if (state.query.status !== "all") params.set("status", state.query.status)
+    if (state.query.sort !== DEFAULT_TASK_QUERY.sort)
+      params.set("sort", state.query.sort)
+    if (state.query.order !== DEFAULT_TASK_QUERY.order)
+      params.set("order", state.query.order)
+    const nextSearch = params.toString()
+    const nextUrl = `${window.location.pathname}${nextSearch ? `?${nextSearch}` : ""}${window.location.hash}`
+    window.history.replaceState(null, "", nextUrl)
+  }, [state.query])
   const [createOpen, setCreateOpen] = useState(false)
   const [editorDirty, setEditorDirty] = useState(false)
   const [editorError, setEditorError] = useState<string | null>(null)
@@ -219,6 +232,7 @@ export function TodoWorkspace({
             topicLoading={state.topicLoading}
             topicError={state.topicError}
             onStatusChange={actions.setStatus}
+            onQueryChange={actions.setQuery}
             onTopicChange={actions.setTopic}
             onSortChange={actions.setSort}
             onOrderChange={actions.setOrder}

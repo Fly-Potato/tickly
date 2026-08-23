@@ -95,6 +95,12 @@ function MobileFilterForm({
         onStatusChange={(status) =>
           setDraft((current) => ({ ...current, status }))
         }
+        onQueryChange={(query) =>
+          setDraft((current) => ({
+            ...current,
+            query: query.trim() || undefined,
+          }))
+        }
         onTopicChange={(topic) =>
           setDraft((current) => {
             const next = { ...current }

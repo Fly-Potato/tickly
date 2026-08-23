@@ -183,6 +183,7 @@ def register_tools(
     @server.tool(annotations=READ_ONLY, structured_output=True)
     async def list_tasks(
         ctx: Context[Any],
+        query: str | None = None,
         status: TaskStatusFilter = "all",
         topic: TopicFilter = None,
         sort: TaskSort = "created_at",
@@ -195,6 +196,7 @@ def register_tools(
         payload = await _api_client_from(ctx).list_tasks(
             token=token,
             request_id=request_id,
+            query=query,
             status=status,
             topic=topic,
             sort=sort,

@@ -6,7 +6,7 @@ Tickly MCP 通过无状态 Streamable HTTP `/mcp` 提供当前账号的受限 To
 
 | 工具 | 用途 |
 | --- | --- |
-| `list_tasks` | 按状态、主题、排序和 cursor 分页读取任务组 |
+| `list_tasks` | 按关键词、状态、主题、排序和 cursor 分页读取任务组 |
 | `get_task` | 按账号内 `serial` 读取任务及直接子任务 |
 | `list_topics` | 读取当前账号实际存在的精确主题值 |
 | `find_parent_tasks` | 查找可以作为父任务的根任务 |
@@ -23,6 +23,7 @@ MCP 不提供删除、批量写入、任意 HTTP 转发或 SQL 工具。任务�
 - 创建子任务使用 `parent_serial`，不要把父子关系写进描述文本。
 - 普通字段更新使用 `update_task`，状态修改使用 `set_task_status`。
 - 返回 `next_cursor` 时继续分页，不能只读取第一页后报告“全部”。
+- 需要检索时优先把关键词传给 `list_tasks.query`；它会匹配任务主题、标题和描述，并与状态、主题筛选按 AND 语义组合。
 - 删除请求必须明确说明当前 MCP 没有删除能力，不得用清空字段或改状态伪造删除。
 
 ## Token 配置

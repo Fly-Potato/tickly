@@ -36,6 +36,7 @@ export type TaskPage = {
 }
 
 export type TaskListQuery = {
+  query?: string
   status: TaskStatusFilter
   topic?: string
   sort: TaskSort
@@ -98,7 +99,7 @@ async function readJson<T>(response: Response): Promise<T> {
 
 export async function listTasks(
   query: TaskListQuery,
-  signal?: AbortSignal,
+  signal?: AbortSignal
 ): Promise<TaskPage> {
   const params = new URLSearchParams({
     status: query.status,
@@ -108,6 +109,9 @@ export async function listTasks(
   })
   if (query.topic !== undefined) {
     params.set("topic", query.topic)
+  }
+  if (query.query !== undefined) {
+    params.set("query", query.query)
   }
   if (query.cursor !== undefined) {
     params.set("cursor", query.cursor)
@@ -126,7 +130,7 @@ export async function listTaskTopics(): Promise<string[]> {
 
 export async function listParentOptions(
   query: ParentOptionQuery,
-  signal?: AbortSignal,
+  signal?: AbortSignal
 ): Promise<ParentOptionPage> {
   const params = new URLSearchParams({ limit: String(query.limit) })
   if (query.query !== undefined) {
@@ -137,7 +141,7 @@ export async function listParentOptions(
   }
   const response = await apiFetch(
     `/api/v1/tasks/parent-options?${params.toString()}`,
-    { signal },
+    { signal }
   )
   return readJson<ParentOptionPage>(response)
 }
@@ -200,7 +204,7 @@ export async function createTask(input: TaskCreateInput): Promise<Task> {
 
 export async function updateTask(
   taskId: string,
-  input: TaskUpdateInput,
+  input: TaskUpdateInput
 ): Promise<Task> {
   const payload = updateTaskPayload(input)
   if (Object.keys(payload).length === 0) {
@@ -212,7 +216,7 @@ export async function updateTask(
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
-    },
+    }
   )
   return readJson<Task>(response)
 }
@@ -220,7 +224,7 @@ export async function updateTask(
 export async function deleteTask(taskId: string): Promise<void> {
   const response = await apiFetch(
     `/api/v1/tasks/${encodeURIComponent(taskId)}`,
-    { method: "DELETE" },
+    { method: "DELETE" }
   )
   if (!response.ok) {
     throw await responseError(response)

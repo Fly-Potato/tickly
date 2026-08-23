@@ -87,6 +87,7 @@ class _CursorPayload(BaseModel):
 
     v: Literal[1]
     status: TaskStatusFilter
+    query: str | None
     topic: str | None
     sort: TaskSort
     order: SortOrder
@@ -196,6 +197,7 @@ def _decode_cursor(cursor: str, query: TaskListQuery) -> _CursorPosition:
 
     if (
         payload.status is not query.status
+        or payload.query != query.query
         or payload.topic != query.topic
         or payload.sort is not query.sort
         or payload.order is not query.order
@@ -252,6 +254,7 @@ def _encode_cursor(task: Task, query: TaskListQuery) -> str:
     raw = _CursorPayload(
         v=1,
         status=query.status,
+        query=query.query,
         topic=query.topic,
         sort=query.sort,
         order=query.order,
@@ -731,13 +734,22 @@ def _after_value(
 
 
 def _matches_task(task: Task, query: TaskListQuery) -> bool:
-    """按状态与大小写敏感主题的 AND 语义判断单个任务。"""
+    """按状态、关键词与大小写敏感主题的 AND 语义判断单个任务。"""
 
     status_matches = (
         query.status is TaskStatusFilter.ALL or task.status == query.status.value
     )
     topic_matches = query.topic is None or task.topic == query.topic
-    return status_matches and topic_matches
+    text_matches = query.query is None or query.query.casefold() in (
+        f"{task.title}\n{task.description}\n{task.topic}".casefold()
+    )
+    return status_matches and topic_matches and text_matches
+
+
+def _search_pattern(value: str) -> str:
+    """把用户关键词转为不扩展 SQL LIKE 通配符的包含匹配。"""
+
+    return "%" + value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
 
 
 def list_tasks(
@@ -757,6 +769,22 @@ def list_tasks(
     if query.topic is not None:
         root_predicates.append(Task.topic == query.topic)
         child_predicates.append(child_match.topic == query.topic)
+    if query.query is not None:
+        pattern = _search_pattern(query.query)
+        root_predicates.append(
+            or_(
+                Task.title.ilike(pattern, escape="\\"),
+                Task.description.ilike(pattern, escape="\\"),
+                Task.topic.ilike(pattern, escape="\\"),
+            )
+        )
+        child_predicates.append(
+            or_(
+                child_match.title.ilike(pattern, escape="\\"),
+                child_match.description.ilike(pattern, escape="\\"),
+                child_match.topic.ilike(pattern, escape="\\"),
+            )
+        )
     root_matches_filter = (
         and_(*root_predicates) if root_predicates else true()
     )

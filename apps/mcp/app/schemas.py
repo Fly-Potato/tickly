@@ -119,6 +119,7 @@ class ToolArguments(BaseModel):
 
 
 class ListTasksArguments(ToolArguments):
+    query: Annotated[str | None, Field(max_length=200)] = None
     status: TaskStatusFilter = "all"
     topic: TopicFilter = None
     sort: TaskSort = "created_at"

@@ -150,6 +150,7 @@ class TicklyApiClient:
         *,
         token: str,
         request_id: str,
+        query: str | None = None,
         status: str,
         topic: str | None,
         sort: str,
@@ -164,6 +165,7 @@ class TicklyApiClient:
             token=token,
             request_id=request_id,
             params={
+                "query": query,
                 "status": status,
                 "topic": topic,
                 "sort": sort,

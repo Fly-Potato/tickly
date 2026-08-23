@@ -69,6 +69,7 @@ describe("任务 API 客户端", () => {
     const controller = new AbortController()
     const query: TaskListQuery = {
       status: "in_progress",
+      query: "部署 & 发布",
       topic: "Tickly & 工作",
       sort: "serial",
       order: "asc",
@@ -76,7 +77,7 @@ describe("任务 API 客户端", () => {
       cursor: "next/+==",
     }
     api.apiFetch.mockResolvedValue(
-      jsonResponse({ items: [group], next_cursor: null }),
+      jsonResponse({ items: [group], next_cursor: null })
     )
 
     await expect(listTasks(query, controller.signal)).resolves.toEqual({
@@ -84,14 +85,14 @@ describe("任务 API 客户端", () => {
       next_cursor: null,
     })
     expect(api.apiFetch).toHaveBeenCalledWith(
-      "/api/v1/tasks?status=in_progress&sort=serial&order=asc&limit=50&topic=Tickly+%26+%E5%B7%A5%E4%BD%9C&cursor=next%2F%2B%3D%3D",
-      { signal: controller.signal },
+      "/api/v1/tasks?status=in_progress&sort=serial&order=asc&limit=50&topic=Tickly+%26+%E5%B7%A5%E4%BD%9C&query=%E9%83%A8%E7%BD%B2+%26+%E5%8F%91%E5%B8%83&cursor=next%2F%2B%3D%3D",
+      { signal: controller.signal }
     )
   })
 
   it("显式空主题也通过 URLSearchParams 发送", async () => {
     api.apiFetch.mockResolvedValue(
-      jsonResponse({ items: [], next_cursor: null }),
+      jsonResponse({ items: [], next_cursor: null })
     )
 
     await listTasks({
@@ -101,7 +102,7 @@ describe("任务 API 客户端", () => {
 
     expect(api.apiFetch).toHaveBeenCalledWith(
       "/api/v1/tasks?status=all&sort=created_at&order=desc&limit=50&topic=",
-      { signal: undefined },
+      { signal: undefined }
     )
   })
 
@@ -121,21 +122,19 @@ describe("任务 API 客户端", () => {
             },
           ],
           next_cursor: "parent-next",
-        }),
+        })
       )
 
     await expect(listTaskTopics()).resolves.toEqual(["Tickly", "工作"])
     await expect(
-      listParentOptions({ query: "#7", limit: 20 }, controller.signal),
-    ).resolves.toEqual(
-      expect.objectContaining({ next_cursor: "parent-next" }),
-    )
+      listParentOptions({ query: "#7", limit: 20 }, controller.signal)
+    ).resolves.toEqual(expect.objectContaining({ next_cursor: "parent-next" }))
 
     expect(api.apiFetch).toHaveBeenNthCalledWith(1, "/api/v1/tasks/topics")
     expect(api.apiFetch).toHaveBeenNthCalledWith(
       2,
       "/api/v1/tasks/parent-options?limit=20&query=%237",
-      { signal: controller.signal },
+      { signal: controller.signal }
     )
   })
 
@@ -143,31 +142,36 @@ describe("任务 API 客户端", () => {
     api.apiFetch.mockResolvedValueOnce(
       jsonResponse(
         { error: { code: "topics_unavailable", message: "主题读取失败" } },
-        503,
-      ),
+        503
+      )
     )
     await expect(listTaskTopics()).rejects.toEqual(
       expect.objectContaining({
         status: 503,
         code: "topics_unavailable",
         message: "主题读取失败",
-      }),
+      })
     )
 
     api.apiFetch.mockResolvedValueOnce(
       jsonResponse(
-        { error: { code: "parent_options_unavailable", message: "候选读取失败" } },
-        500,
-      ),
+        {
+          error: {
+            code: "parent_options_unavailable",
+            message: "候选读取失败",
+          },
+        },
+        500
+      )
     )
     await expect(
-      listParentOptions({ limit: 20 }, new AbortController().signal),
+      listParentOptions({ limit: 20 }, new AbortController().signal)
     ).rejects.toEqual(
       expect.objectContaining({
         status: 500,
         code: "parent_options_unavailable",
         message: "候选读取失败",
-      }),
+      })
     )
   })
 
@@ -228,11 +232,11 @@ describe("任务 API 客户端", () => {
 
   it("空更新在发送请求前抛出稳定错误", async () => {
     await expect(updateTask("task-id", {})).rejects.toThrow(
-      "至少需要提供一个可更新字段",
+      "至少需要提供一个可更新字段"
     )
-    await expect(
-      updateTask("task-id", { title: undefined }),
-    ).rejects.toThrow("至少需要提供一个可更新字段")
+    await expect(updateTask("task-id", { title: undefined })).rejects.toThrow(
+      "至少需要提供一个可更新字段"
+    )
 
     expect(api.apiFetch).not.toHaveBeenCalled()
   })
@@ -257,7 +261,7 @@ describe("任务 API 客户端", () => {
 
     expect(api.apiFetch).toHaveBeenCalledWith(
       "/api/v1/tasks/task%2Fid%3Fchild",
-      { method: "DELETE" },
+      { method: "DELETE" }
     )
   })
 
@@ -265,8 +269,8 @@ describe("任务 API 客户端", () => {
     api.apiFetch.mockResolvedValue(
       jsonResponse(
         { error: { code: "task_not_found", message: "任务不存在" } },
-        404,
-      ),
+        404
+      )
     )
 
     await expect(deleteTask("missing")).rejects.toEqual(
@@ -274,7 +278,7 @@ describe("任务 API 客户端", () => {
         status: 404,
         code: "task_not_found",
         message: "任务不存在",
-      }),
+      })
     )
   })
 })

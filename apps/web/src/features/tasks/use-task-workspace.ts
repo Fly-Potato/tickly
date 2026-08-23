@@ -48,6 +48,7 @@ export type TaskWorkspaceState = {
 }
 
 export type TaskWorkspaceActions = {
+  setQuery(query: string | undefined): void
   setStatus(status: TaskStatusFilter): void
   setTopic(topic: string | undefined): void
   setSort(sort: TaskSort): void
@@ -63,7 +64,35 @@ export type TaskWorkspaceActions = {
   remove(taskId: string): Promise<void>
 }
 
-const initialQuery: WorkspaceQuery = { ...DEFAULT_TASK_QUERY }
+function queryFromLocation(): WorkspaceQuery {
+  if (typeof window === "undefined") return { ...DEFAULT_TASK_QUERY }
+  const params = new URLSearchParams(window.location.search)
+  const next = { ...DEFAULT_TASK_QUERY }
+  const query = params.get("query")?.trim()
+  const topic = params.get("topic")?.trim()
+  if (query) next.query = query
+  if (topic) next.topic = topic
+  if (
+    ["all", "new", "in_progress", "completed"].includes(
+      params.get("status") ?? ""
+    )
+  ) {
+    next.status = params.get("status") as TaskStatusFilter
+  }
+  if (
+    ["serial", "created_at", "due_at", "priority"].includes(
+      params.get("sort") ?? ""
+    )
+  ) {
+    next.sort = params.get("sort") as TaskSort
+  }
+  if (["asc", "desc"].includes(params.get("order") ?? "")) {
+    next.order = params.get("order") as SortOrder
+  }
+  return next
+}
+
+const initialQuery: WorkspaceQuery = queryFromLocation()
 const STATUS_MUTATION_CONFLICT_MESSAGE = "任务状态正在更新，请稍后重试"
 const STRUCTURAL_MUTATION_CONFLICT_MESSAGE = "已有任务操作正在进行中"
 
@@ -85,6 +114,10 @@ function appendUniqueGroups(
 
 function taskMatchesQuery(task: Task, query: WorkspaceQuery): boolean {
   return (
+    (query.query === undefined ||
+      `${task.title}\n${task.description}\n${task.topic}`
+        .toLocaleLowerCase()
+        .includes(query.query.toLocaleLowerCase())) &&
     (query.status === "all" || task.status === query.status) &&
     (query.topic === undefined || task.topic === query.topic)
   )
@@ -219,6 +252,7 @@ function isAbortError(error: unknown): boolean {
 
 function queriesEqual(left: WorkspaceQuery, right: WorkspaceQuery): boolean {
   return (
+    left.query === right.query &&
     left.status === right.status &&
     left.topic === right.topic &&
     left.sort === right.sort &&
@@ -401,6 +435,12 @@ export function useTaskWorkspace(): {
       replaceQuery({ ...queryRef.current, ...patch })
     },
     [replaceQuery]
+  )
+
+  const setQuery = useCallback(
+    (query: string | undefined) =>
+      updateQuery({ query: query?.trim() || undefined }),
+    [updateQuery]
   )
 
   const acquireStatusMutation = useCallback((taskId: string): boolean => {
@@ -671,6 +711,7 @@ export function useTaskWorkspace(): {
 
   const actions = useMemo<TaskWorkspaceActions>(
     () => ({
+      setQuery,
       setStatus: (status) => updateQuery({ status }),
       setTopic: (topic) => updateQuery({ topic }),
       setSort: (sort) => updateQuery({ sort }),
@@ -696,6 +737,7 @@ export function useTaskWorkspace(): {
       retry,
       save,
       updateQuery,
+      setQuery,
     ]
   )
 

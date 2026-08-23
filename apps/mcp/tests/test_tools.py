@@ -665,6 +665,7 @@ async def test_read_tool_input_and_output_json_schemas_are_explicit() -> None:
 
     list_schema = tools["list_tasks"].input_schema
     assert set(list_schema["properties"]) == {
+        "query",
         "status",
         "topic",
         "sort",
@@ -716,6 +717,7 @@ async def test_read_tools_forward_exact_arguments_token_and_request_id() -> None
             "list_tasks",
             {
                 "status": "completed",
+                "query": "部署",
                 "topic": "工作",
                 "sort": "serial",
                 "order": "asc",
@@ -736,6 +738,7 @@ async def test_read_tools_forward_exact_arguments_token_and_request_id() -> None
             {
                 "token": TOKEN,
                 "request_id": REQUEST_ID,
+                "query": "部署",
                 "status": "completed",
                 "topic": "工作",
                 "sort": "serial",
@@ -775,6 +778,7 @@ async def test_read_tools_forward_stable_defaults() -> None:
             {
                 "token": TOKEN,
                 "request_id": REQUEST_ID,
+                "query": None,
                 "status": "all",
                 "topic": None,
                 "sort": "created_at",
@@ -858,6 +862,7 @@ async def test_integer_inputs_reject_coercion_before_calling_upstream(
                 {
                     "token": TOKEN,
                     "request_id": REQUEST_ID,
+                    "query": None,
                     "status": "all",
                     "topic": None,
                     "sort": "created_at",

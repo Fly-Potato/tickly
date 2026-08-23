@@ -1443,6 +1443,24 @@ def test_tree_filters_roots_or_direct_children_and_keeps_complete_counts(
     assert tasks[5].id not in returned_ids
 
 
+def test_tree_search_matches_title_description_and_topic_with_user_isolation(
+    session: Session,
+) -> None:
+    owner, tasks = add_tree_filter_fixture(session)
+
+    title_page = list_tasks(session, owner.id, TaskListQuery(query="root-new"))
+    description_page = list_tasks(
+        session, owner.id, TaskListQuery(query="child-completed")
+    )
+    topic_page = list_tasks(session, owner.id, TaskListQuery(query="work"))
+    other_page = list_tasks(session, owner.id, TaskListQuery(query="other-user"))
+
+    assert [group.task.id for group in title_page.items] == [tasks[1].id]
+    assert [child.id for child in description_page.items[0].children] == [tasks[2].id]
+    assert [group.task.id for group in topic_page.items] == [tasks[4].id, tasks[1].id]
+    assert other_page.items == []
+
+
 def test_tree_list_uses_one_root_query_and_one_batch_child_query(
     session: Session,
 ) -> None:
