@@ -67,7 +67,7 @@ export type TaskWorkspaceActions = {
 function queryFromLocation(): WorkspaceQuery {
   if (typeof window === "undefined") return { ...DEFAULT_TASK_QUERY }
   const params = new URLSearchParams(window.location.search)
-  const next = { ...DEFAULT_TASK_QUERY }
+  const next: WorkspaceQuery = { ...DEFAULT_TASK_QUERY }
   const query = params.get("query")?.trim()
   const topic = params.get("topic")?.trim()
   if (query) next.query = query
