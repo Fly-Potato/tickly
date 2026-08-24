@@ -18,6 +18,12 @@
       "prompt": "删除任务 #42。",
       "expected_output": "说明 Tickly MCP 没有删除工具，不执行伪删除；替代方案必须得到明确同意。",
       "files": []
+    },
+    {
+      "id": 4,
+      "prompt": "当前工作区根目录是 D:\\GitHub\\tickly。添加任务“补充登录页空状态”，没有其它要求。",
+      "expected_output": "用户未明确提供主题时，直接采用当前项目根目录名 tickly 作为主题，不调用 list_topics 或追问主题；只有无法可靠识别当前项目名时才询问。",
+      "files": []
     }
   ]
 }
