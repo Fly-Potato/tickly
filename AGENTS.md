@@ -6,8 +6,8 @@ Tickly 是一个计划接入 AI 能力的类 Todo List 项目，采用 monorepo 
 
 当前状态：
 
-- `apps/web` 已具备用户名登录、内存 access token、自动 refresh 和认证状态恢复；新版响应式 Todo 工作区在桌面端使用左筛选、右列表两栏布局，移动端使用筛选 Dialog，并支持 CRUD、New / In Progress / Completed 三状态、必填自由文本主题、账号内 `serial`、可选截止时间、一层父子待办、筛选、排序、cursor 分页、账号时区和 Vitest 测试。
-- `apps/api` 已具备 FastAPI 应用工厂、`/health`、数据库与 migration 感知的 `/ready`、请求 ID、统一错误、结构化日志、SQLAlchemy/SQLite 数据层、Alembic migration、单账号 CLI 和 JWT/refresh 会话认证；Todo API 已支持账号内 `serial`、必填 `description` 与 `topic`、可空 `priority`、三状态、可选截止时间、一层父子待办、`/api/v1/tasks/topics` 与 `/api/v1/tasks/parent-options`，所有任务访问均受当前用户所有权保护。
+- `apps/web` 已具备用户名登录、内存 access token、自动 refresh 和认证状态恢复；新版响应式 Todo 工作区在桌面端使用左筛选、右列表两栏布局，移动端使用筛选 Dialog，并支持 CRUD、New / In Progress / Completed / Cancelled 四状态、必填自由文本主题、账号内 `serial`、可选截止时间、一层父子待办、筛选、排序、cursor 分页、账号时区和 Vitest 测试。
+- `apps/api` 已具备 FastAPI 应用工厂、`/health`、数据库与 migration 感知的 `/ready`、请求 ID、统一错误、结构化日志、SQLAlchemy/SQLite 数据层、Alembic migration、单账号 CLI 和 JWT/refresh 会话认证；Todo API 已支持账号内 `serial`、必填 `description` 与 `topic`、可空 `priority`、四状态、可选截止时间、一层父子待办、`/api/v1/tasks/topics` 与 `/api/v1/tasks/parent-options`，所有任务访问均受当前用户所有权保护。父任务进入 `cancelled` 时只级联废弃其 `new` / `in_progress` 直接子任务，`completed` / `cancelled` 子任务保持不变；恢复父任务不会自动恢复子任务。
 - `apps/mcp` 已具备官方 MCP Python SDK v2 的无状态 Streamable HTTP `/mcp`、长期 Bearer Token 认证、七个受限 Todo 工具、内部 API 适配、结构化日志与健康检查；不提供删除工具，也不直接访问 SQLite。
 - 仓库已配置在全仓检查后构建三套多架构 GHCR 镜像的发布 job，并提供只让 Web/Caddy 接入外部 Traefik 网络的 Compose 覆盖文件；实际 Package 可见性、匿名拉取和线上 HTTPS smoke 必须在远端分别验证，不能仅凭仓库配置描述为已经发布。
 - 模型调用、自然语言任务规划等 AI 功能尚未实现；不要把这些能力描述成现有能力。

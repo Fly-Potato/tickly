@@ -115,6 +115,45 @@ async def test_list_tasks_forwards_query_and_security_headers() -> None:
 
 
 @pytest.mark.asyncio
+async def test_list_tasks_validates_resolved_child_count_contract() -> None:
+    """任务组必须接收服务端提供的已处理子任务计数。"""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "items": [
+                    {
+                        "task": task_payload(),
+                        "children": [],
+                        "child_count": 0,
+                        "completed_child_count": 0,
+                        "resolved_child_count": 0,
+                        "context_only": False,
+                    }
+                ],
+                "next_cursor": None,
+            },
+        )
+
+    result = await call_with_transport(
+        handler,
+        lambda client: client.list_tasks(
+            token=TOKEN,
+            request_id=REQUEST_ID,
+            status="all",
+            topic=None,
+            sort="created_at",
+            order="desc",
+            cursor=None,
+            limit=50,
+        ),
+    )
+
+    assert result.items[0].resolved_child_count == 0
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("operation", "method", "path", "query", "body"),
     [
@@ -170,8 +209,20 @@ async def test_list_tasks_forwards_query_and_security_headers() -> None:
             {},
             {"priority": None, "due_at": None},
         ),
+        (
+            lambda client: client.update_task(
+                token=TOKEN,
+                request_id=REQUEST_ID,
+                serial=7,
+                patch={"status": "cancelled"},
+            ),
+            "PATCH",
+            "/internal/mcp/v1/tasks/7",
+            {},
+            {"status": "cancelled"},
+        ),
     ],
-    ids=["detail", "topics", "parents", "create", "update"],
+    ids=["detail", "topics", "parents", "create", "update", "cancelled-status"],
 )
 async def test_api_operations_use_exact_http_contract(
     operation: Callable[[TicklyApiClient], Awaitable[object]],

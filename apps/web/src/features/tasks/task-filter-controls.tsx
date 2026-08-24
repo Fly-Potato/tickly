@@ -11,6 +11,7 @@ const STATUS_OPTIONS: ReadonlyArray<{
   { value: "new", label: "New" },
   { value: "in_progress", label: "In Progress" },
   { value: "completed", label: "Completed" },
+  { value: "cancelled", label: "Cancelled" },
 ]
 
 const SORT_OPTIONS: ReadonlyArray<{ value: TaskSort; label: string }> = [

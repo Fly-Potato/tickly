@@ -53,6 +53,9 @@ function makeGroup(task: Task, children: Task[] = []): TaskGroup {
     completed_child_count: children.filter(
       (child) => child.status === "completed"
     ).length,
+    resolved_child_count: children.filter(
+      (child) => child.status === "completed" || child.status === "cancelled"
+    ).length,
     context_only: false,
   }
 }
@@ -70,9 +73,24 @@ function deferred<T>() {
 beforeEach(() => {
   Object.values(tasks).forEach((mock) => mock.mockReset())
   tasks.listTaskTopics.mockResolvedValue([])
+  window.history.replaceState(null, "", "/")
 })
 
 describe("Todo 工作区读取状态", () => {
+  it("从 URL 恢复废弃筛选并按该状态请求列表", async () => {
+    window.history.replaceState(null, "", "/?status=cancelled")
+    tasks.listTasks.mockResolvedValueOnce({ items: [], next_cursor: null })
+
+    const { result } = renderHook(() => useTaskWorkspace())
+
+    await waitFor(() => expect(result.current.state.initialLoading).toBe(false))
+    expect(result.current.state.query.status).toBe("cancelled")
+    expect(tasks.listTasks).toHaveBeenCalledWith(
+      { ...DEFAULT_TASK_QUERY, status: "cancelled" },
+      expect.any(AbortSignal)
+    )
+  })
+
   it("挂载时并行启动任务列表和主题请求", async () => {
     const page = deferred<TaskPage>()
     const topics = deferred<string[]>()
@@ -433,6 +451,7 @@ describe("Todo 工作区 mutation", () => {
       children: [createdChild],
       child_count: 3,
       completed_child_count: 1,
+      resolved_child_count: 1,
     })
     expect(result.current.state.selectedTaskId).toBe(pagedParent.id)
     expect(result.current.state.nextCursor).toBe("page-2")
@@ -509,6 +528,7 @@ describe("Todo 工作区 mutation", () => {
       children: [createdChild],
       child_count: 3,
       completed_child_count: 1,
+      resolved_child_count: 1,
     })
     expect(result.current.state.selectedTaskId).toBe(pagedParent.id)
     expect(result.current.state.nextCursor).toBe("page-2")
@@ -820,6 +840,7 @@ describe("Todo 工作区 mutation", () => {
       completed_at: child.completed_at,
     })
     expect(result.current.state.items[0].completed_child_count).toBe(1)
+    expect(result.current.state.items[0].resolved_child_count).toBe(1)
     expect(result.current.state.statusMutatingTaskIds.has(child.id)).toBe(true)
 
     await act(async () => {
@@ -830,8 +851,85 @@ describe("Todo 工作区 mutation", () => {
       child
     )
     expect(result.current.state.items[0].completed_child_count).toBe(0)
+    expect(result.current.state.items[0].resolved_child_count).toBe(0)
     expect(result.current.state.statusError).toBe("任务状态更新失败")
     expect(result.current.state.statusMutatingTaskIds.has(child.id)).toBe(false)
+  })
+
+  it("废弃子任务会清空完成时间并在失败时回滚两种统计", async () => {
+    const root = makeTask("root-cancel", 10)
+    const child = makeTask("child-cancel", 11, {
+      parent_id: root.id,
+      status: "completed",
+      completed_at: "2026-08-18T08:00:00Z",
+    })
+    const failure = deferred<Task>()
+    tasks.listTasks.mockResolvedValueOnce({
+      items: [makeGroup(root, [child])],
+      next_cursor: null,
+    })
+    tasks.updateTask.mockReturnValueOnce(failure.promise)
+    const { result } = renderHook(() => useTaskWorkspace())
+    await waitFor(() => expect(result.current.state.initialLoading).toBe(false))
+
+    let request!: Promise<void>
+    act(() => {
+      request = result.current.actions.changeStatus(child, "cancelled")
+    })
+    expect(findTaskInGroups(result.current.state.items, child.id)).toEqual({
+      ...child,
+      status: "cancelled",
+      completed_at: null,
+    })
+    expect(result.current.state.items[0].completed_child_count).toBe(0)
+    expect(result.current.state.items[0].resolved_child_count).toBe(1)
+
+    await act(async () => {
+      failure.reject(new Error("废弃写入失败"))
+      await expect(request).rejects.toThrow("废弃写入失败")
+    })
+    expect(findTaskInGroups(result.current.state.items, child.id)).toEqual(
+      child
+    )
+    expect(result.current.state.items[0].completed_child_count).toBe(1)
+    expect(result.current.state.items[0].resolved_child_count).toBe(1)
+  })
+
+  it("废弃父任务后以服务端刷新结果覆盖级联子任务和统计", async () => {
+    const root = makeTask("root-cascade", 20)
+    const activeChild = makeTask("active-child", 21, { parent_id: root.id })
+    const cancelledRoot = { ...root, status: "cancelled" as const }
+    const cancelledChild = {
+      ...activeChild,
+      status: "cancelled" as const,
+      completed_at: null,
+    }
+    const refreshedGroup: TaskGroup = {
+      ...makeGroup(cancelledRoot, [cancelledChild]),
+      child_count: 3,
+      completed_child_count: 1,
+      resolved_child_count: 3,
+    }
+    tasks.listTasks
+      .mockResolvedValueOnce({
+        items: [makeGroup(root, [activeChild])],
+        next_cursor: null,
+      })
+      .mockResolvedValueOnce({ items: [refreshedGroup], next_cursor: null })
+    tasks.updateTask.mockResolvedValueOnce(cancelledRoot)
+    const { result } = renderHook(() => useTaskWorkspace())
+    await waitFor(() => expect(result.current.state.initialLoading).toBe(false))
+
+    await act(async () => {
+      await result.current.actions.changeStatus(root, "cancelled")
+    })
+
+    expect(result.current.state.items).toEqual([refreshedGroup])
+    expect(findTaskInGroups(result.current.state.items, activeChild.id)).toEqual(
+      cancelledChild
+    )
+    expect(result.current.state.items[0].completed_child_count).toBe(1)
+    expect(result.current.state.items[0].resolved_child_count).toBe(3)
   })
 
   it("状态成功先采用服务端节点，再用当前 query 重读分组", async () => {
@@ -916,6 +1014,7 @@ describe("Todo 工作区 mutation", () => {
       savedChild
     )
     expect(result.current.state.items[0].completed_child_count).toBe(1)
+    expect(result.current.state.items[0].resolved_child_count).toBe(1)
 
     await act(async () => {
       statusUpdate.reject(new Error("状态写入失败"))
@@ -927,6 +1026,7 @@ describe("Todo 工作区 mutation", () => {
       completed_at: null,
     })
     expect(result.current.state.items[0].completed_child_count).toBe(0)
+    expect(result.current.state.items[0].resolved_child_count).toBe(0)
   })
 
   it("changeStatus 占锁时拒绝同任务的 status save，成功后锁可复用", async () => {

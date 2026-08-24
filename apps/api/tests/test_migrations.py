@@ -219,7 +219,9 @@ def test_task_model_migration_backfills_schema_and_can_downgrade(
     assert "length(topic) BETWEEN 1 AND 100" in task_checks[
         "ck_tasks_topic_length"
     ]
-    assert "'new', 'in_progress', 'completed'" in task_checks["ck_tasks_status"]
+    assert "'new', 'in_progress', 'completed', 'cancelled'" in task_checks[
+        "ck_tasks_status"
+    ]
     assert "'low', 'medium', 'high'" in task_checks["ck_tasks_priority"]
     assert task_uniques["uq_tasks_user_serial"] == ["user_id", "serial"]
     assert {
@@ -492,7 +494,7 @@ def test_task_model_migration_rejects_orphans_before_ddl_and_can_retry(
     with engine.connect() as connection:
         assert connection.exec_driver_sql(
             "SELECT version_num FROM alembic_version"
-        ).scalar_one() == "0002_todo_task_model"
+        ).scalar_one() == "0003_add_cancelled_task_status"
     assert "serial" in {
         column["name"] for column in inspect(engine).get_columns("tasks")
     }
@@ -578,6 +580,111 @@ def test_task_model_migration_enforces_constraints_and_foreign_key_actions(
     engine.dispose()
 
 
+def test_cancelled_status_migration_upgrades_and_downgrades_lossily(
+    tmp_path: Path,
+) -> None:
+    database_path = tmp_path / "cancelled-status.db"
+    database_url = f"sqlite:///{database_path}"
+    config = Config("alembic.ini")
+    config.set_main_option("sqlalchemy.url", database_url)
+    command.upgrade(config, "0002_todo_task_model")
+    engine = create_engine_for_settings(
+        type("Settings", (), {"database_url": database_url})()
+    )
+
+    with engine.begin() as connection:
+        connection.exec_driver_sql(
+            "INSERT INTO users "
+            "(id, username, password_hash, timezone, is_active, created_at, updated_at) "
+            "VALUES "
+            "('u1', 'owner', 'hash', 'Asia/Shanghai', 1, '2026-08-01', '2026-08-01')"
+        )
+
+    command.upgrade(config, "head")
+    with engine.begin() as connection:
+        # completed_at 故意保留异常值，验证降级兼容映射会一并清理。
+        connection.exec_driver_sql(
+            "INSERT INTO tasks "
+            "(id, user_id, serial, title, description, priority, topic, status, "
+            "due_at, completed_at, parent_id, created_at, updated_at) VALUES "
+            "('cancelled', 'u1', 1, '已废弃', '已废弃', NULL, 'Tickly', "
+            "'cancelled', NULL, '2026-08-02', NULL, '2026-08-01', '2026-08-02'), "
+            "('completed', 'u1', 2, '已完成', '已完成', NULL, 'Tickly', "
+            "'completed', NULL, '2026-08-03', NULL, '2026-08-01', '2026-08-03')"
+        )
+        with pytest.raises(IntegrityError):
+            connection.exec_driver_sql(
+                "INSERT INTO tasks "
+                "(id, user_id, serial, title, description, priority, topic, status, "
+                "due_at, completed_at, parent_id, created_at, updated_at) VALUES "
+                "('invalid', 'u1', 3, '非法', '非法', NULL, 'Tickly', 'blocked', "
+                "NULL, NULL, NULL, '2026-08-01', '2026-08-01')"
+            )
+
+    command.downgrade(config, "0002_todo_task_model")
+    with engine.connect() as connection:
+        rows = connection.exec_driver_sql(
+            "SELECT id, status, completed_at FROM tasks ORDER BY id"
+        ).all()
+        revision = connection.exec_driver_sql(
+            "SELECT version_num FROM alembic_version"
+        ).scalar_one()
+
+    assert rows == [
+        ("cancelled", "new", None),
+        ("completed", "completed", "2026-08-03"),
+    ]
+    assert revision == "0002_todo_task_model"
+    engine.dispose()
+
+
+def test_cancelled_status_upgrade_rejects_unknown_history_before_batch_ddl(
+    tmp_path: Path,
+) -> None:
+    database_path = tmp_path / "cancelled-status-unknown.db"
+    database_url = f"sqlite:///{database_path}"
+    config = Config("alembic.ini")
+    config.set_main_option("sqlalchemy.url", database_url)
+    command.upgrade(config, "0002_todo_task_model")
+    engine = create_engine_for_settings(
+        type("Settings", (), {"database_url": database_url})()
+    )
+
+    with engine.begin() as connection:
+        connection.exec_driver_sql(
+            "INSERT INTO users "
+            "(id, username, password_hash, timezone, is_active, created_at, updated_at) "
+            "VALUES "
+            "('u1', 'owner', 'hash', 'Asia/Shanghai', 1, '2026-08-01', '2026-08-01')"
+        )
+        # 只为模拟约束启用前遗留的坏数据，写入后立即恢复约束检查。
+        connection.exec_driver_sql("PRAGMA ignore_check_constraints=ON")
+        connection.exec_driver_sql(
+            "INSERT INTO tasks "
+            "(id, user_id, serial, title, description, priority, topic, status, "
+            "due_at, completed_at, parent_id, created_at, updated_at) VALUES "
+            "('invalid', 'u1', 1, '非法', '非法', NULL, 'Tickly', 'blocked', "
+            "NULL, NULL, NULL, '2026-08-01', '2026-08-01')"
+        )
+        connection.exec_driver_sql("PRAGMA ignore_check_constraints=OFF")
+
+    with pytest.raises(RuntimeError, match="未知任务状态"):
+        command.upgrade(config, "head")
+
+    inspector = inspect(engine)
+    task_status_check = {
+        check["name"]: check["sqltext"]
+        for check in inspector.get_check_constraints("tasks")
+    }["ck_tasks_status"]
+    assert "cancelled" not in task_status_check
+    assert "_alembic_tmp_tasks" not in inspector.get_table_names()
+    with engine.connect() as connection:
+        assert connection.exec_driver_sql(
+            "SELECT version_num FROM alembic_version"
+        ).scalar_one() == "0002_todo_task_model"
+    engine.dispose()
+
+
 def test_task_model_downgrade_rejects_user_orphans_before_ddl_and_can_retry(
     tmp_path: Path,
 ) -> None:
@@ -585,7 +692,8 @@ def test_task_model_downgrade_rejects_user_orphans_before_ddl_and_can_retry(
     database_url = f"sqlite:///{database_path}"
     config = Config("alembic.ini")
     config.set_main_option("sqlalchemy.url", database_url)
-    command.upgrade(config, "head")
+    # 本用例只验证 0002 自身的降级预检，避免后续 revision 的重建语义干扰。
+    command.upgrade(config, "0002_todo_task_model")
     engine = create_engine_for_settings(
         type("Settings", (), {"database_url": database_url})()
     )

@@ -307,7 +307,7 @@ def register_tools(
         status: TaskStatus,
         ctx: Context[Any],
     ) -> TaskWriteResult:
-        """把任务切换为 New、In Progress 或 Completed。"""
+        """把任务切换为 New、In Progress、Completed 或可恢复的 Cancelled。"""
         token, request_id = security_context_provider(ctx)
         payload = await _api_client_from(ctx).update_task(
             token=token,

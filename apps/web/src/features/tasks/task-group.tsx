@@ -33,7 +33,7 @@ export function TaskGroupView({
         progress={
           group.child_count > 0
             ? {
-                completed: group.completed_child_count,
+                resolved: group.resolved_child_count,
                 total: group.child_count,
               }
             : undefined

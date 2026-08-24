@@ -24,6 +24,24 @@
       "prompt": "当前工作区根目录是 D:\\GitHub\\tickly。添加任务“补充登录页空状态”，没有其它要求。",
       "expected_output": "用户未明确提供主题时，直接采用当前项目根目录名 tickly 作为主题，不调用 list_topics 或追问主题；只有无法可靠识别当前项目名时才询问。",
       "files": []
+    },
+    {
+      "id": 5,
+      "prompt": "废弃父任务 #42。它的直接子任务是 #43（new）、#44（in_progress）和 #45（completed）。",
+      "expected_output": "先调用 get_task 核验当前状态，明确说明废弃是状态变更而非删除，并列出 #43、#44 会级联废弃、#45 保持完成，以及恢复 #42 不会自动恢复子任务；等待用户明确确认后才调用 set_task_status，写后再次调用 get_task 并按实际结果报告父任务、级联子任务和保持完成项。",
+      "files": []
+    },
+    {
+      "id": 6,
+      "prompt": "我看到了废弃父任务及子任务影响提示，不执行了。",
+      "expected_output": "停止操作，不调用 set_task_status 或任何其他写工具，并明确说明任务未修改。",
+      "files": []
+    },
+    {
+      "id": 7,
+      "prompt": "把已废弃的父任务 #42 恢复为 New。",
+      "expected_output": "先提示恢复父任务不会自动恢复子任务并等待明确确认；确认后仅用 set_task_status 修改 #42，随后再次调用 get_task 核验并按实际状态报告。",
+      "files": []
     }
   ]
 }

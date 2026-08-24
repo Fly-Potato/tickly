@@ -6,7 +6,7 @@ type TaskRowProps = {
   timeZone: string
   statusMutating: boolean
   child?: boolean
-  progress?: { completed: number; total: number }
+  progress?: { resolved: number; total: number }
   contextOnly?: boolean
   onSelect(task: Task): void
   onStatusChange(task: Task, status: TaskStatus): Promise<void>
@@ -22,6 +22,7 @@ const statusOptions: ReadonlyArray<{ value: TaskStatus; label: string }> = [
   { value: "new", label: "New" },
   { value: "in_progress", label: "In Progress" },
   { value: "completed", label: "Completed" },
+  { value: "cancelled", label: "Cancelled" },
 ]
 
 export function TaskRow({
@@ -37,6 +38,7 @@ export function TaskRow({
   const priorityLabel =
     task.priority === null ? null : priorityLabels[task.priority]
   const completed = task.status === "completed"
+  const cancelled = task.status === "cancelled"
 
   return (
     <tr
@@ -53,15 +55,15 @@ export function TaskRow({
           onClick={() => onSelect(task)}
         >
           <span
-            className={
-              completed ? "task-row-title line-through" : "task-row-title"
-            }
+            className={`task-row-title${completed ? " line-through" : ""}${
+              cancelled ? " task-row-title--cancelled" : ""
+            }`}
           >
             {task.title}
           </span>
           {progress !== undefined ? (
             <span className="task-row-progress">
-              {progress.completed}/{progress.total} 已完成
+              {progress.resolved}/{progress.total} 已处理
             </span>
           ) : null}
           {contextOnly ? (

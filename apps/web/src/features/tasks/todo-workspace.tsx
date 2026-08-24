@@ -34,6 +34,7 @@ const statusLabels: Record<TaskStatusFilter, string> = {
   new: "New",
   in_progress: "In Progress",
   completed: "Completed",
+  cancelled: "Cancelled",
 }
 
 function WorkspaceHeader({

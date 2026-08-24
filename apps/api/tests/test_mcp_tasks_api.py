@@ -466,6 +466,100 @@ def test_internal_status_uses_existing_completion_semantics(
     assert response.json()["completed_at"].endswith("Z")
 
 
+def test_internal_cancelled_parent_cascades_pending_children_and_reports_counts(
+    mcp_client: TestClient,
+    mcp_headers: dict[str, str],
+) -> None:
+    """内部 Bearer 契约按流水号废弃父任务，并保留已完成子任务。"""
+
+    parent = add_task(mcp_client, serial=1, title="父任务")
+    new_child = add_task(
+        mcp_client,
+        serial=2,
+        title="未开始子任务",
+        parent_id=parent.id,
+    )
+    progressing_child = add_task(
+        mcp_client,
+        serial=3,
+        title="进行中子任务",
+        status="in_progress",
+        parent_id=parent.id,
+    )
+    completed_child = add_task(
+        mcp_client,
+        serial=4,
+        title="已完成子任务",
+        parent_id=parent.id,
+    )
+    completed = mcp_client.patch(
+        f"/internal/mcp/v1/tasks/{completed_child.serial}",
+        headers=mcp_headers,
+        json={"status": "completed"},
+    ).json()
+
+    cancelled = mcp_client.patch(
+        f"/internal/mcp/v1/tasks/{parent.serial}",
+        headers=mcp_headers,
+        json={"status": "cancelled"},
+    )
+    repeated = mcp_client.patch(
+        f"/internal/mcp/v1/tasks/{parent.serial}",
+        headers=mcp_headers,
+        json={"status": "cancelled"},
+    )
+    detail = mcp_client.get(
+        f"/internal/mcp/v1/tasks/{parent.serial}", headers=mcp_headers
+    )
+    filtered = mcp_client.get(
+        "/internal/mcp/v1/tasks",
+        headers=mcp_headers,
+        params={"status": "cancelled", "sort": "serial", "order": "asc"},
+    )
+
+    assert cancelled.status_code == repeated.status_code == 200
+    assert cancelled.json()["status"] == repeated.json()["status"] == "cancelled"
+    assert cancelled.json()["completed_at"] is None
+    children_by_serial = {
+        child["serial"]: child for child in detail.json()["children"]
+    }
+    assert children_by_serial[new_child.serial]["status"] == "cancelled"
+    assert children_by_serial[progressing_child.serial]["status"] == "cancelled"
+    assert children_by_serial[completed_child.serial]["status"] == "completed"
+    assert children_by_serial[completed_child.serial]["completed_at"] == completed[
+        "completed_at"
+    ]
+    assert children_by_serial[completed_child.serial]["updated_at"] == completed[
+        "updated_at"
+    ]
+    assert filtered.status_code == 200
+    group = filtered.json()["items"][0]
+    assert group["task"]["serial"] == parent.serial
+    assert group["child_count"] == 3
+    assert group["completed_child_count"] == 1
+    assert group["resolved_child_count"] == 3
+
+    restored = mcp_client.patch(
+        f"/internal/mcp/v1/tasks/{parent.serial}",
+        headers=mcp_headers,
+        json={"status": "new"},
+    )
+    restored_detail = mcp_client.get(
+        f"/internal/mcp/v1/tasks/{parent.serial}", headers=mcp_headers
+    )
+
+    assert restored.status_code == 200
+    assert restored.json()["status"] == "new"
+    assert {
+        child["serial"]: child["status"]
+        for child in restored_detail.json()["children"]
+    } == {
+        new_child.serial: "cancelled",
+        progressing_child.serial: "cancelled",
+        completed_child.serial: "completed",
+    }
+
+
 @pytest.mark.parametrize("field", ["title", "description", "topic", "status"])
 def test_internal_patch_rejects_null_for_required_fields(
     mcp_client: TestClient,

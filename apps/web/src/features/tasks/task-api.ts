@@ -2,7 +2,7 @@ import { apiFetch } from "@/features/auth/auth-api"
 import { responseError } from "@/lib/api-error"
 
 export type TaskPriority = "low" | "medium" | "high"
-export type TaskStatus = "new" | "in_progress" | "completed"
+export type TaskStatus = "new" | "in_progress" | "completed" | "cancelled"
 export type TaskStatusFilter = "all" | TaskStatus
 export type TaskSort = "serial" | "created_at" | "due_at" | "priority"
 export type SortOrder = "asc" | "desc"
@@ -27,6 +27,7 @@ export type TaskGroup = {
   children: Task[]
   child_count: number
   completed_child_count: number
+  resolved_child_count: number
   context_only: boolean
 }
 

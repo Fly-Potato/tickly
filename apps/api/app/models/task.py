@@ -24,7 +24,7 @@ class Task(Base):
         ),
         CheckConstraint("length(topic) BETWEEN 1 AND 100", name="ck_tasks_topic_length"),
         CheckConstraint(
-            "status IN ('new', 'in_progress', 'completed')",
+            "status IN ('new', 'in_progress', 'completed', 'cancelled')",
             name="ck_tasks_status",
         ),
         CheckConstraint(

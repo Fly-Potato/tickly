@@ -23,6 +23,7 @@ class TaskStatus(StrEnum):
     NEW = "new"
     IN_PROGRESS = "in_progress"
     COMPLETED = "completed"
+    CANCELLED = "cancelled"
 
 
 class TaskStatusFilter(StrEnum):
@@ -30,6 +31,7 @@ class TaskStatusFilter(StrEnum):
     NEW = "new"
     IN_PROGRESS = "in_progress"
     COMPLETED = "completed"
+    CANCELLED = "cancelled"
 
 
 class TaskSort(StrEnum):
@@ -206,6 +208,7 @@ class TaskGroupResponse(BaseModel):
     children: list[TaskResponse]
     child_count: int
     completed_child_count: int
+    resolved_child_count: int
     context_only: bool
 
 

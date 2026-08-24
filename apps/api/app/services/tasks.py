@@ -4,7 +4,8 @@
 同时约束任务 ID 和用户 ID，因此格式错误、不存在与跨用户访问使用同一异常。
 创建、更新和硬删除各自拥有提交边界，失败时回滚 Session 中全部挂起改动；
 读取和列表没有外部副作用。每次从非 completed 进入 completed 时写入完成
-时间，重复 completed 保留原值，离开 completed 时清空。
+时间，重复 completed 保留原值，离开 completed 时清空；父任务进入 cancelled
+时，同事务废弃当前账号内尚未进行完的直接子任务，恢复父任务不反向恢复子任务。
 
 SQLite 可能返回无时区时间，分页游标统一按 UTC 解释。游标是严格校验的
 Base64URL JSON，不是授权凭据或秘密；它绑定状态、排序和方向，并用排序值加
@@ -61,6 +62,7 @@ class TaskGroup:
     children: list[Task]
     child_count: int
     completed_child_count: int
+    resolved_child_count: int
     context_only: bool
 
 
@@ -593,6 +595,55 @@ def get_task_detail(
     return TaskDetail(task=task, children=children)
 
 
+def _set_task_status(task: Task, next_status: TaskStatus, now: datetime) -> None:
+    """维护状态、完成时间和更新时间之间的统一不变量。
+
+    只有 completed 拥有完成时间，重复完成保留首次时间；new、in_progress 与
+    cancelled 都清空完成时间。调用方传入同一个 now，使父任务与被级联子任务
+    在单一事务中留下相同更新时间。
+    """
+
+    if (
+        next_status is TaskStatus.COMPLETED
+        and task.status != TaskStatus.COMPLETED.value
+    ):
+        task.completed_at = now
+    elif next_status is not TaskStatus.COMPLETED:
+        task.completed_at = None
+    task.status = next_status.value
+    task.updated_at = now
+
+
+def _cancel_unfinished_children(
+    session: Session,
+    user_id: str,
+    parent_id: str,
+    now: datetime,
+) -> None:
+    """仅废弃当前账号指定父任务下未完成的直接子任务。
+
+    账号、父 ID 和可变状态都在同一 SQL 中约束，completed 与 cancelled 行不会
+    被 UPDATE 触碰，因此其 updated_at 保持不变。该语句不自行提交，由父任务
+    更新入口统一提交或回滚。
+    """
+
+    session.execute(
+        update(Task)
+        .where(
+            Task.user_id == user_id,
+            Task.parent_id == parent_id,
+            Task.status.in_(
+                (TaskStatus.NEW.value, TaskStatus.IN_PROGRESS.value)
+            ),
+        )
+        .values(
+            status=TaskStatus.CANCELLED.value,
+            completed_at=None,
+            updated_at=now,
+        )
+    )
+
+
 def _update_task_after_relationship_lock(
     session: Session,
     user_id: str,
@@ -638,15 +689,13 @@ def _update_task_after_relationship_lock(
 
     now = utc_now()
     if "status" in fields:
-        next_status = payload.status.value  # type: ignore[union-attr]
-        # 重复 completed 保留首次时间；离开 completed 必须清空以支持再次完成。
-        if next_status == "completed" and task.status != "completed":
-            task.completed_at = now
-        elif next_status != "completed":
-            task.completed_at = None
-        task.status = next_status
-
-    task.updated_at = now
+        # schema 已拒绝显式 null，此处收窄类型后统一维护状态时间不变量。
+        assert payload.status is not None
+        _set_task_status(task, payload.status, now)
+        if payload.status is TaskStatus.CANCELLED:
+            _cancel_unfinished_children(session, user_id, task.id, now)
+    else:
+        task.updated_at = now
     session.commit()
     return task
 
@@ -938,6 +987,11 @@ def list_tasks(
                 child_count=len(children),
                 completed_child_count=sum(
                     child.status == TaskStatus.COMPLETED.value for child in children
+                ),
+                resolved_child_count=sum(
+                    child.status
+                    in (TaskStatus.COMPLETED.value, TaskStatus.CANCELLED.value)
+                    for child in children
                 ),
                 context_only=not root_matches,
             )

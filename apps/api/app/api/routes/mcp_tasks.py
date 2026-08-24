@@ -84,6 +84,7 @@ def list_all(
                 ],
                 child_count=group.child_count,
                 completed_child_count=group.completed_child_count,
+                resolved_child_count=group.resolved_child_count,
                 context_only=group.context_only,
             )
             for group in page.items

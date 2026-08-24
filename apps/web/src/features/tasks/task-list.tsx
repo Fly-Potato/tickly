@@ -23,6 +23,7 @@ const emptyMessages: Record<TaskStatusFilter, string> = {
   new: "还没有新任务。",
   in_progress: "没有进行中的任务。",
   completed: "还没有已完成的任务。",
+  cancelled: "还没有已废弃的任务。",
 }
 
 export function TaskList({

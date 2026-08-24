@@ -6,13 +6,13 @@ Tickly MCP 通过无状态 Streamable HTTP `/mcp` 提供当前账号的受限 To
 
 | 工具 | 用途 |
 | --- | --- |
-| `list_tasks` | 按关键词、状态、主题、排序和 cursor 分页读取任务组 |
+| `list_tasks` | 按关键词、`new` / `in_progress` / `completed` / `cancelled` 状态、主题、排序和 cursor 分页读取任务组 |
 | `get_task` | 按账号内 `serial` 读取任务及直接子任务 |
 | `list_topics` | 读取当前账号实际存在的精确主题值 |
 | `find_parent_tasks` | 查找可以作为父任务的根任务 |
 | `create_task` | 创建根任务或一层子任务 |
 | `update_task` | 更新普通字段，不修改状态 |
-| `set_task_status` | 切换 `new`、`in_progress`、`completed` 状态 |
+| `set_task_status` | 切换 `new`、`in_progress`、`completed`、`cancelled` 状态 |
 
 MCP 不提供删除、批量写入、任意 HTTP 转发或 SQL 工具。任务所有权、父子约束、流水号、事务和字段校验仍由 API 决定。
 
@@ -22,6 +22,10 @@ MCP 不提供删除、批量写入、任意 HTTP 转发或 SQL 工具。任务�
 - 主题不确定时先使用 `list_topics`；父任务不确定时先使用 `find_parent_tasks`。
 - 创建子任务使用 `parent_serial`，不要把父子关系写进描述文本。
 - 普通字段更新使用 `update_task`，状态修改使用 `set_task_status`。
+- `cancelled` 是可恢复的“已废弃”状态，不是删除；进入该状态会清空任务的 `completed_at`。
+- 父任务进入 `cancelled` 时，API 会在服务端事务内级联废弃其 `new` / `in_progress` 直接子任务；`completed` / `cancelled` 子任务保持不变，恢复父任务也不会自动恢复子任务。MCP 客户端不得重复逐项修改子任务。
+- AI 废弃父任务前必须先用 `get_task` 读取影响范围，明确列出父任务、会级联废弃的子任务、保持完成的子任务及“恢复父任务不会恢复子任务”，并等待用户确认。用户拒绝时不得调用写工具；写入后再次调用 `get_task`，只按实际结果报告。
+- AI 恢复父任务前也必须提示不会自动恢复子任务并等待确认；写入后用 `get_task` 核验实际状态。
 - 返回 `next_cursor` 时继续分页，不能只读取第一页后报告“全部”。
 - 需要检索时优先把关键词传给 `list_tasks.query`；它会匹配任务主题、标题和描述，并与状态、主题筛选按 AND 语义组合。
 - 删除请求必须明确说明当前 MCP 没有删除能力，不得用清空字段或改状态伪造删除。

@@ -201,6 +201,99 @@ def test_patch_maintains_completion_time_and_independent_description(
     assert reset_to_new.json()["completed_at"] is None
 
 
+def test_cancelled_parent_cascades_pending_children_and_restore_is_one_way(
+    task_client: TestClient,
+) -> None:
+    """父任务废弃只级联未处理子任务，恢复父任务不会反向恢复子任务。"""
+
+    headers = auth_headers(task_client)
+    parent = create_task_via_api(task_client, headers, "父任务", topic="工作")
+    new_child = create_task_via_api(
+        task_client,
+        headers,
+        "未开始子任务",
+        topic="工作",
+        parent_id=parent["id"],
+    )
+    progressing_child = create_task_via_api(
+        task_client,
+        headers,
+        "进行中子任务",
+        topic="工作",
+        parent_id=parent["id"],
+    )
+    completed_child = create_task_via_api(
+        task_client,
+        headers,
+        "已完成子任务",
+        topic="工作",
+        parent_id=parent["id"],
+    )
+    task_client.patch(
+        f"/api/v1/tasks/{progressing_child['id']}",
+        headers=headers,
+        json={"status": "in_progress"},
+    )
+    completed = task_client.patch(
+        f"/api/v1/tasks/{completed_child['id']}",
+        headers=headers,
+        json={"status": "completed"},
+    ).json()
+
+    cancelled = task_client.patch(
+        f"/api/v1/tasks/{parent['id']}",
+        headers=headers,
+        json={"status": "cancelled"},
+    )
+    detail = task_client.get(f"/api/v1/tasks/{parent['id']}", headers=headers)
+    filtered = task_client.get(
+        "/api/v1/tasks",
+        headers=headers,
+        params={"status": "cancelled", "sort": "serial", "order": "asc"},
+    )
+
+    assert cancelled.status_code == 200
+    assert cancelled.json()["status"] == "cancelled"
+    assert cancelled.json()["completed_at"] is None
+    assert detail.status_code == 200
+    children_by_id = {child["id"]: child for child in detail.json()["children"]}
+    assert children_by_id[new_child["id"]]["status"] == "cancelled"
+    assert children_by_id[new_child["id"]]["completed_at"] is None
+    assert children_by_id[progressing_child["id"]]["status"] == "cancelled"
+    assert children_by_id[progressing_child["id"]]["completed_at"] is None
+    assert children_by_id[completed_child["id"]]["status"] == "completed"
+    assert children_by_id[completed_child["id"]]["completed_at"] == completed[
+        "completed_at"
+    ]
+    assert children_by_id[completed_child["id"]]["updated_at"] == completed[
+        "updated_at"
+    ]
+    assert filtered.status_code == 200
+    group = filtered.json()["items"][0]
+    assert group["task"]["id"] == parent["id"]
+    assert group["child_count"] == 3
+    assert group["completed_child_count"] == 1
+    assert group["resolved_child_count"] == 3
+
+    restored = task_client.patch(
+        f"/api/v1/tasks/{parent['id']}",
+        headers=headers,
+        json={"status": "new"},
+    )
+    restored_detail = task_client.get(
+        f"/api/v1/tasks/{parent['id']}", headers=headers
+    )
+
+    assert restored.status_code == 200
+    assert restored.json()["status"] == "new"
+    restored_children = {
+        child["id"]: child for child in restored_detail.json()["children"]
+    }
+    assert restored_children[new_child["id"]]["status"] == "cancelled"
+    assert restored_children[progressing_child["id"]]["status"] == "cancelled"
+    assert restored_children[completed_child["id"]]["status"] == "completed"
+
+
 @pytest.mark.parametrize(
     ("method", "path", "payload"),
     [
@@ -606,6 +699,7 @@ def test_openapi_exposes_new_owned_contract_without_server_fields(
     assert schemas["TaskListResponse"]["properties"]["items"]["items"]["$ref"].endswith(
         "/TaskGroupResponse"
     )
+    assert "resolved_child_count" in schemas["TaskGroupResponse"]["properties"]
     assert schemas["TaskDetailResponse"]["properties"]["children"]["items"][
         "$ref"
     ].endswith("/TaskResponse")

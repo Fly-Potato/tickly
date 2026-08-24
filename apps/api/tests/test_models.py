@@ -69,7 +69,9 @@ def test_models_expose_required_tables_and_task_indexes(tmp_path: Path) -> None:
         "ck_tasks_serial_positive": "serial > 0",
         "ck_tasks_description_length": "length(description) BETWEEN 1 AND 4000",
         "ck_tasks_topic_length": "length(topic) BETWEEN 1 AND 100",
-        "ck_tasks_status": "status IN ('new', 'in_progress', 'completed')",
+        "ck_tasks_status": (
+            "status IN ('new', 'in_progress', 'completed', 'cancelled')"
+        ),
         "ck_tasks_priority": (
             "priority IS NULL OR priority IN ('low', 'medium', 'high')"
         ),
@@ -190,6 +192,29 @@ def test_task_length_constraints_accept_maximum_values(tmp_path: Path) -> None:
         session.commit()
 
         assert session.query(Task).count() == 1
+
+    engine.dispose()
+
+
+def test_task_status_constraint_accepts_cancelled(tmp_path: Path) -> None:
+    engine, session_factory = make_session_factory(tmp_path)
+    with session_factory() as session:
+        user = User(username="person", password_hash="hash")
+        session.add(user)
+        session.flush()
+        session.add(
+            Task(
+                user_id=user.id,
+                serial=1,
+                title="已废弃任务",
+                description="保留记录但不再执行",
+                topic="Tickly",
+                status="cancelled",
+            )
+        )
+        session.commit()
+
+        assert session.query(Task).one().status == "cancelled"
 
     engine.dispose()
 

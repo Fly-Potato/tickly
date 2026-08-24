@@ -751,6 +751,160 @@ def test_status_transitions_control_completed_at(
     assert completed_again.updated_at == completed_again_time
 
 
+def test_cancelling_parent_cascades_only_unfinished_owned_children(
+    session: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    owner = add_user(session, "cancel-parent-owner")
+    other = add_user(session, "cancel-parent-other")
+    created_at = datetime(2026, 8, 24, 8, tzinfo=UTC)
+    cancelled_at = datetime(2026, 8, 24, 9, tzinfo=UTC)
+    parent = add_task(
+        session,
+        owner.id,
+        "00000000-0000-0000-0000-000000000101",
+        "父任务",
+        serial=1,
+        created_at=created_at,
+    )
+    new_child = add_task(
+        session,
+        owner.id,
+        "00000000-0000-0000-0000-000000000102",
+        "未开始子任务",
+        serial=2,
+        created_at=created_at,
+        parent_id=parent.id,
+    )
+    active_child = add_task(
+        session,
+        owner.id,
+        "00000000-0000-0000-0000-000000000103",
+        "进行中子任务",
+        serial=3,
+        created_at=created_at,
+        parent_id=parent.id,
+        status="in_progress",
+    )
+    completed_child = add_task(
+        session,
+        owner.id,
+        "00000000-0000-0000-0000-000000000104",
+        "已完成子任务",
+        serial=4,
+        created_at=created_at,
+        parent_id=parent.id,
+        status="completed",
+    )
+    cancelled_child = add_task(
+        session,
+        owner.id,
+        "00000000-0000-0000-0000-000000000105",
+        "已废弃子任务",
+        serial=5,
+        created_at=created_at,
+        parent_id=parent.id,
+        status="cancelled",
+    )
+    other_child = add_task(
+        session,
+        other.id,
+        "00000000-0000-0000-0000-000000000106",
+        "其他账号子任务",
+        serial=1,
+        created_at=created_at,
+        parent_id=parent.id,
+    )
+    completed_updated_at = completed_child.updated_at.replace(tzinfo=None)
+    cancelled_updated_at = cancelled_child.updated_at.replace(tzinfo=None)
+
+    monkeypatch.setattr("app.services.tasks.utc_now", lambda: cancelled_at)
+    updated = update_task(
+        session, owner.id, parent.id, TaskUpdateRequest(status="cancelled")
+    )
+    session.expire_all()
+
+    assert updated.status == "cancelled"
+    assert updated.completed_at is None
+    assert updated.updated_at == cancelled_at.replace(tzinfo=None)
+    for child in (new_child, active_child):
+        persisted = get_task(session, owner.id, child.id)
+        assert persisted.status == "cancelled"
+        assert persisted.completed_at is None
+        # SQLite 持久化后会丢失时区，但父子必须写入同一 UTC 墙上时间。
+        assert persisted.updated_at == cancelled_at.replace(tzinfo=None)
+    persisted_completed = get_task(session, owner.id, completed_child.id)
+    persisted_cancelled = get_task(session, owner.id, cancelled_child.id)
+    assert persisted_completed.status == "completed"
+    assert persisted_completed.updated_at == completed_updated_at
+    assert persisted_cancelled.status == "cancelled"
+    assert persisted_cancelled.updated_at == cancelled_updated_at
+    persisted_other = get_task(session, other.id, other_child.id)
+    assert persisted_other.status == "new"
+    assert persisted_other.updated_at == created_at.replace(tzinfo=None)
+
+
+def test_restoring_cancelled_parent_does_not_restore_children(session: Session) -> None:
+    owner = add_user(session, "restore-cancelled-parent")
+    created_at = datetime(2026, 8, 24, 8, tzinfo=UTC)
+    parent = add_task(
+        session,
+        owner.id,
+        "00000000-0000-0000-0000-000000000111",
+        "已废弃父任务",
+        serial=1,
+        created_at=created_at,
+        status="cancelled",
+    )
+    child = add_task(
+        session,
+        owner.id,
+        "00000000-0000-0000-0000-000000000112",
+        "已废弃子任务",
+        serial=2,
+        created_at=created_at,
+        parent_id=parent.id,
+        status="cancelled",
+    )
+
+    update_task(session, owner.id, parent.id, TaskUpdateRequest(status="in_progress"))
+    session.expire_all()
+
+    assert get_task(session, owner.id, parent.id).status == "in_progress"
+    assert get_task(session, owner.id, child.id).status == "cancelled"
+
+
+def test_parent_cancellation_commit_failure_rolls_back_parent_and_children(
+    session: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    owner = add_user(session, "cancel-parent-rollback")
+    parent = create_task(
+        session, owner.id, TaskCreateRequest(title="父任务", topic="Tickly")
+    )
+    child = create_task(
+        session,
+        owner.id,
+        TaskCreateRequest(title="子任务", topic="Tickly", parent_id=parent.id),
+    )
+
+    def fail_commit() -> None:
+        raise IntegrityError("强制提交失败", {}, RuntimeError("测试事务回滚"))
+
+    with monkeypatch.context() as commit_failure:
+        commit_failure.setattr(session, "commit", fail_commit)
+        with pytest.raises(IntegrityError):
+            update_task(
+                session, owner.id, parent.id, TaskUpdateRequest(status="cancelled")
+            )
+
+    session.expire_all()
+    assert get_task(session, owner.id, parent.id).status == "new"
+    assert get_task(session, owner.id, child.id).status == "new"
+    recovered = update_task(
+        session, owner.id, parent.id, TaskUpdateRequest(title="回滚后可更新")
+    )
+    assert recovered.title == "回滚后可更新"
+
+
 def test_update_task_rolls_back_all_pending_changes_on_commit_failure(
     session: Session, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1441,6 +1595,68 @@ def test_tree_filters_roots_or_direct_children_and_keeps_complete_counts(
         for task in (group.task, *group.children)
     }
     assert tasks[5].id not in returned_ids
+
+
+def test_tree_groups_count_resolved_children_from_complete_direct_set(
+    session: Session,
+) -> None:
+    owner = add_user(session, "resolved-child-count-owner")
+    created_at = datetime(2026, 8, 24, 8, tzinfo=UTC)
+    root = add_task(
+        session,
+        owner.id,
+        "00000000-0000-0000-0000-000000000121",
+        "未开始父任务",
+        serial=1,
+        created_at=created_at,
+    )
+    add_task(
+        session,
+        owner.id,
+        "00000000-0000-0000-0000-000000000122",
+        "未开始子任务",
+        serial=2,
+        created_at=created_at,
+        parent_id=root.id,
+    )
+    completed = add_task(
+        session,
+        owner.id,
+        "00000000-0000-0000-0000-000000000123",
+        "已完成子任务",
+        serial=3,
+        created_at=created_at,
+        parent_id=root.id,
+        status="completed",
+    )
+    add_task(
+        session,
+        owner.id,
+        "00000000-0000-0000-0000-000000000124",
+        "已废弃子任务",
+        serial=4,
+        created_at=created_at,
+        parent_id=root.id,
+        status="cancelled",
+    )
+
+    complete_group = list_tasks(
+        session, owner.id, TaskListQuery(status=TaskStatusFilter.ALL)
+    ).items[0]
+    context_group = list_tasks(
+        session, owner.id, TaskListQuery(status=TaskStatusFilter.COMPLETED)
+    ).items[0]
+
+    assert complete_group.context_only is False
+    assert len(complete_group.children) == 3
+    assert complete_group.child_count == 3
+    assert complete_group.completed_child_count == 1
+    assert complete_group.resolved_child_count == 2
+    assert context_group.context_only is True
+    assert [child.id for child in context_group.children] == [completed.id]
+    assert context_group.child_count == 3
+    assert context_group.completed_child_count == 1
+    assert context_group.resolved_child_count == 2
 
 
 def test_tree_search_matches_title_description_and_topic_with_user_isolation(

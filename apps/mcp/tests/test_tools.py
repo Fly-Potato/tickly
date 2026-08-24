@@ -82,6 +82,7 @@ class FakeApiClient:
                         "children": [child],
                         "child_count": 1,
                         "completed_child_count": 0,
+                        "resolved_child_count": 0,
                         "context_only": False,
                     }
                 ],
@@ -230,6 +231,7 @@ async def test_write_tool_input_and_output_schemas_are_restricted() -> None:
         "new",
         "in_progress",
         "completed",
+        "cancelled",
     }
 
     for name in ("create_task", "update_task", "set_task_status"):
@@ -266,7 +268,7 @@ async def test_write_tools_forward_exact_payloads_and_return_structured_results(
         )
         status_changed = await client.call_tool(
             "set_task_status",
-            {"serial": 9.0, "status": "completed"},
+            {"serial": 9.0, "status": "cancelled"},
         )
 
     assert fake.calls == [
@@ -300,7 +302,7 @@ async def test_write_tools_forward_exact_payloads_and_return_structured_results(
                 "token": TOKEN,
                 "request_id": REQUEST_ID,
                 "serial": 9,
-                "patch": {"status": "completed"},
+                "patch": {"status": "cancelled"},
             },
         ),
     ]
@@ -675,6 +677,13 @@ async def test_read_tool_input_and_output_json_schemas_are_explicit() -> None:
     }
     assert list_schema.get("required", []) == []
     assert list_schema["properties"]["status"]["default"] == "all"
+    assert set(list_schema["properties"]["status"]["enum"]) == {
+        "all",
+        "new",
+        "in_progress",
+        "completed",
+        "cancelled",
+    }
     assert list_schema["properties"]["sort"]["default"] == "created_at"
     assert list_schema["properties"]["order"]["default"] == "desc"
     assert list_schema["properties"]["limit"] == {

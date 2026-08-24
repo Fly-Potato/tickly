@@ -69,6 +69,7 @@ describe("Todo 表格式列表", () => {
         children: [child],
         child_count: 2,
         completed_child_count: 1,
+        resolved_child_count: 1,
         context_only: false,
       },
     ])
@@ -77,7 +78,7 @@ describe("Todo 表格式列表", () => {
     expect(
       screen.getAllByRole("columnheader").map((header) => header.textContent)
     ).toEqual(["#", "待办", "主题", "优先级", "截止时间", "状态"])
-    expect(screen.getByText("1/2 已完成")).toBeInTheDocument()
+    expect(screen.getByText("1/2 已处理")).toBeInTheDocument()
     expect(screen.getByRole("row", { name: /补充移动端布局/ })).toHaveAttribute(
       "data-child",
       "true"
@@ -94,6 +95,7 @@ describe("Todo 表格式列表", () => {
         children: [],
         child_count: 0,
         completed_child_count: 0,
+        resolved_child_count: 0,
         context_only: false,
       },
     ])
@@ -111,6 +113,7 @@ describe("Todo 表格式列表", () => {
         children: [],
         child_count: 1,
         completed_child_count: 0,
+        resolved_child_count: 0,
         context_only: true,
       },
     ])
@@ -132,6 +135,7 @@ describe("Todo 表格式列表", () => {
         children: [],
         child_count: 0,
         completed_child_count: 0,
+        resolved_child_count: 0,
         context_only: false,
       },
     ])
@@ -142,6 +146,59 @@ describe("Todo 表格式列表", () => {
     )
     expect(props.onStatusChange).toHaveBeenCalledWith(task, "in_progress")
     expect(props.onSelect).not.toHaveBeenCalled()
+  })
+
+  it("废弃任务保持可见且提供独立状态样式和状态选项", async () => {
+    const user = userEvent.setup()
+    const task = makeTask("cancelled", 13, {
+      title: "不再执行的任务",
+      status: "cancelled",
+    })
+    const props = renderList([
+      {
+        task,
+        children: [],
+        child_count: 0,
+        completed_child_count: 0,
+        resolved_child_count: 0,
+        context_only: false,
+      },
+    ])
+
+    const row = screen.getByRole("row", { name: /不再执行的任务/ })
+    expect(row).toHaveAttribute("data-status", "cancelled")
+    expect(within(row).getByText("不再执行的任务")).toHaveClass(
+      "task-row-title--cancelled"
+    )
+    await user.selectOptions(
+      screen.getByLabelText("设置 #13 的状态"),
+      "cancelled"
+    )
+    expect(props.onStatusChange).toHaveBeenCalledWith(task, "cancelled")
+  })
+
+  it("完成和废弃子任务都计入已处理进度", () => {
+    const root = makeTask("root-progress", 20)
+    const completed = makeTask("completed-child", 21, {
+      parent_id: root.id,
+      status: "completed",
+    })
+    const cancelled = makeTask("cancelled-child", 22, {
+      parent_id: root.id,
+      status: "cancelled",
+    })
+    renderList([
+      {
+        task: root,
+        children: [completed, cancelled],
+        child_count: 3,
+        completed_child_count: 1,
+        resolved_child_count: 2,
+        context_only: false,
+      },
+    ])
+
+    expect(screen.getByText("2/3 已处理")).toBeInTheDocument()
   })
 
   it("空数据和加载状态继续提供可读提示", () => {

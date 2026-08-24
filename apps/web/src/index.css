@@ -414,6 +414,11 @@
     @apply text-muted-foreground line-through decoration-slate-400;
   }
 
+  .task-row[data-status="cancelled"] .task-row-title,
+  .task-row-title--cancelled {
+    @apply text-muted-foreground line-through decoration-dashed decoration-slate-400;
+  }
+
   .task-row-topic,
   .task-row-priority,
   .task-row-due {

@@ -16,8 +16,8 @@ from pydantic import (
 
 
 TaskPriority = Literal["low", "medium", "high"]
-TaskStatusValue = Literal["new", "in_progress", "completed"]
-TaskStatusFilter = Literal["all", "new", "in_progress", "completed"]
+TaskStatusValue = Literal["new", "in_progress", "completed", "cancelled"]
+TaskStatusFilter = Literal["all", "new", "in_progress", "completed", "cancelled"]
 TaskSort = Literal["serial", "created_at", "due_at", "priority"]
 SortOrder = Literal["asc", "desc"]
 
@@ -69,11 +69,12 @@ McpAwareDatetime = Annotated[
 
 
 class TaskStatus(StrEnum):
-    """状态写工具唯一允许的三个 Tickly 状态。"""
+    """状态写工具唯一允许的四个 Tickly 状态。"""
 
     NEW = "new"
     IN_PROGRESS = "in_progress"
     COMPLETED = "completed"
+    CANCELLED = "cancelled"
 
 
 class CreateTaskInput(BaseModel):
@@ -182,6 +183,7 @@ class TaskGroupPayload(ApiPayload):
     children: list[TaskPayload]
     child_count: int
     completed_child_count: int
+    resolved_child_count: int
     context_only: bool
 
 

@@ -117,6 +117,19 @@ describe("Todo 编辑面板", () => {
     })
   })
 
+  it("可将任务状态保存为已废弃", async () => {
+    const user = userEvent.setup()
+    const props = renderEditor()
+
+    expect(
+      screen.getByRole("option", { name: "已废弃" })
+    ).toHaveValue("cancelled")
+    await user.selectOptions(screen.getByLabelText("状态"), "cancelled")
+    await user.click(screen.getByRole("button", { name: "保存" }))
+
+    expect(props.onSave).toHaveBeenCalledWith({ status: "cancelled" })
+  })
+
   it("保存失败后重新显示错误并保留用户修改", async () => {
     const user = userEvent.setup()
     const onSave = vi.fn().mockRejectedValue(new Error("网络中断"))

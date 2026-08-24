@@ -73,7 +73,7 @@ function queryFromLocation(): WorkspaceQuery {
   if (query) next.query = query
   if (topic) next.topic = topic
   if (
-    ["all", "new", "in_progress", "completed"].includes(
+    ["all", "new", "in_progress", "completed", "cancelled"].includes(
       params.get("status") ?? ""
     )
   ) {
@@ -92,7 +92,6 @@ function queryFromLocation(): WorkspaceQuery {
   return next
 }
 
-const initialQuery: WorkspaceQuery = queryFromLocation()
 const STATUS_MUTATION_CONFLICT_MESSAGE = "任务状态正在更新，请稍后重试"
 const STRUCTURAL_MUTATION_CONFLICT_MESSAGE = "已有任务操作正在进行中"
 
@@ -146,6 +145,9 @@ function appendCreatedChildToParent(
     child_count: group.child_count + 1,
     completed_child_count:
       group.completed_child_count + (child.status === "completed" ? 1 : 0),
+    resolved_child_count:
+      group.resolved_child_count +
+      (child.status === "completed" || child.status === "cancelled" ? 1 : 0),
   }
   return nextGroups
 }
@@ -210,13 +212,24 @@ function updateTaskInGroups(
       const nextChildren = group.children.slice()
       nextChildren[childIndex] = nextChild
       const nextGroups = groups.slice()
+      const currentChild = group.children[childIndex]
+      const completedDelta =
+        Number(nextChild.status === "completed") -
+        Number(currentChild.status === "completed")
+      const resolvedDelta =
+        Number(
+          nextChild.status === "completed" || nextChild.status === "cancelled"
+        ) -
+        Number(
+          currentChild.status === "completed" ||
+            currentChild.status === "cancelled"
+        )
       nextGroups[groupIndex] = {
         ...group,
         children: nextChildren,
-        completed_child_count: nextChildren.reduce(
-          (count, child) => count + (child.status === "completed" ? 1 : 0),
-          0
-        ),
+        // 筛选和分页下 children 可能不是完整集合，必须在服务端总数上应用状态差量。
+        completed_child_count: group.completed_child_count + completedDelta,
+        resolved_child_count: group.resolved_child_count + resolvedDelta,
       }
       return nextGroups
     }
@@ -261,7 +274,7 @@ function queriesEqual(left: WorkspaceQuery, right: WorkspaceQuery): boolean {
   )
 }
 
-function createInitialState(): TaskWorkspaceState {
+function createInitialState(initialQuery: WorkspaceQuery): TaskWorkspaceState {
   return {
     query: { ...initialQuery },
     items: [],
@@ -285,7 +298,9 @@ export function useTaskWorkspace(): {
   state: TaskWorkspaceState
   actions: TaskWorkspaceActions
 } {
-  const [state, setState] = useState(createInitialState)
+  // 每个工作区实例只在首次挂载读取 URL，测试与客户端重新挂载都能恢复当前筛选。
+  const [initialQuery] = useState(queryFromLocation)
+  const [state, setState] = useState(() => createInitialState(initialQuery))
   const queryRef = useRef<WorkspaceQuery>({ ...initialQuery })
   const nextCursorRef = useRef<string | null>(null)
   const requestGenerationRef = useRef(0)

@@ -314,6 +314,7 @@ export function TaskEditorPanel({
                   <option value="new">新建</option>
                   <option value="in_progress">进行中</option>
                   <option value="completed">已完成</option>
+                  <option value="cancelled">已废弃</option>
                 </select>
               </label>
 

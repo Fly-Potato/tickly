@@ -46,12 +46,14 @@ def test_task_enums_expose_only_the_new_contract_values() -> None:
         "new",
         "in_progress",
         "completed",
+        "cancelled",
     ]
     assert [item.value for item in TaskStatusFilter] == [
         "all",
         "new",
         "in_progress",
         "completed",
+        "cancelled",
     ]
     assert [item.value for item in TaskSort] == [
         "serial",
@@ -314,6 +316,7 @@ def test_tree_detail_topic_and_parent_page_responses_have_strict_shapes() -> Non
         children=[child],
         child_count=2,
         completed_child_count=1,
+        resolved_child_count=2,
         context_only=True,
     )
     page = TaskListResponse(items=[group], next_cursor="next-tree")
@@ -328,6 +331,7 @@ def test_tree_detail_topic_and_parent_page_responses_have_strict_shapes() -> Non
     assert page.items[0].children[0].id == child.id
     assert page.items[0].child_count == 2
     assert page.items[0].completed_child_count == 1
+    assert page.items[0].resolved_child_count == 2
     assert page.items[0].context_only is True
     assert detail.children == [child]
     assert topics.items == ["Tickly", "工作"]

@@ -7,7 +7,7 @@ Tickly 是一个面向个人多设备使用的 Todo 应用 monorepo，当前提�
 已实现：
 
 - 用户名登录、内存 access token、refresh session 和账号所有权隔离。
-- Todo 的创建、编辑、删除确认、筛选、排序、cursor 分页和三种状态：`new`、`in_progress`、`completed`。
+- Todo 的创建、编辑、删除确认、筛选、排序、cursor 分页和四种状态：`new`、`in_progress`、`completed`、`cancelled`（已废弃，可恢复）。废弃父任务会级联废弃其未开始或进行中的直接子任务，已完成或已废弃的子任务保持不变；恢复父任务不会自动恢复子任务。
 - 账号内 `serial`、主题、可选截止时间和一层父子待办。
 - 无状态 Streamable HTTP MCP `/mcp`，提供七个受限 Todo 工具。
 - Docker Compose 本地运行，以及 API、MCP、Web 三套多架构 GHCR 镜像发布配置。

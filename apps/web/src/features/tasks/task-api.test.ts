@@ -41,6 +41,7 @@ const group: TaskGroup = {
   children: [],
   child_count: 0,
   completed_child_count: 0,
+  resolved_child_count: 0,
   context_only: false,
 }
 
@@ -102,6 +103,19 @@ describe("任务 API 客户端", () => {
 
     expect(api.apiFetch).toHaveBeenCalledWith(
       "/api/v1/tasks?status=all&sort=created_at&order=desc&limit=50&topic=",
+      { signal: undefined }
+    )
+  })
+
+  it("按废弃状态请求列表", async () => {
+    api.apiFetch.mockResolvedValue(
+      jsonResponse({ items: [], next_cursor: null })
+    )
+
+    await listTasks({ ...DEFAULT_TASK_QUERY, status: "cancelled" })
+
+    expect(api.apiFetch).toHaveBeenCalledWith(
+      "/api/v1/tasks?status=cancelled&sort=created_at&order=desc&limit=50",
       { signal: undefined }
     )
   })

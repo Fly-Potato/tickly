@@ -121,6 +121,9 @@ function makeGroup(
     completed_child_count: children.filter(
       (child) => child.status === "completed"
     ).length,
+    resolved_child_count: children.filter(
+      (child) => child.status === "completed" || child.status === "cancelled"
+    ).length,
     context_only: false,
     ...overrides,
   }
@@ -151,6 +154,7 @@ function renderWorkspace(onLogout = vi.fn().mockResolvedValue(undefined)) {
 beforeEach(() => {
   Object.values(tasks).forEach((mock) => mock.mockReset())
   tasks.listTaskTopics.mockResolvedValue(["Tickly", "工作"])
+  window.history.replaceState(null, "", "/")
 })
 
 describe("Todo 工作区", () => {
@@ -173,6 +177,7 @@ describe("Todo 工作区", () => {
         makeGroup(root, [child], {
           child_count: 2,
           completed_child_count: 1,
+          resolved_child_count: 1,
           context_only: true,
         }),
       ],
@@ -188,7 +193,7 @@ describe("Todo 工作区", () => {
     expect(screen.getByText("Asia/Shanghai")).toBeInTheDocument()
     expect(screen.getByText("高优先级")).toBeInTheDocument()
     expect(screen.getByText("#18")).toBeInTheDocument()
-    expect(screen.getByText("1/2 已完成")).toBeInTheDocument()
+    expect(screen.getByText("1/2 已处理")).toBeInTheDocument()
     expect(screen.getByRole("row", { name: /补充回归测试/ })).toHaveAttribute(
       "data-child",
       "true"
@@ -390,7 +395,7 @@ describe("Todo 工作区", () => {
     ).toBeInTheDocument()
     expect(title).toHaveValue("")
     expect(topic).toHaveValue("工作")
-    expect(screen.getByText("0/3 已完成")).toBeInTheDocument()
+    expect(screen.getByText("0/3 已处理")).toBeInTheDocument()
     expect(
       screen.getByRole("button", { name: "编辑 分页子任务", hidden: true })
     ).toBeInTheDocument()
@@ -402,32 +407,32 @@ describe("Todo 工作区", () => {
     renderWorkspace()
 
     await screen.findByText("还没有任务，先写下第一件事。")
-    await user.click(screen.getByRole("button", { name: "In Progress" }))
+    await user.click(screen.getByRole("button", { name: "Cancelled" }))
     await waitFor(() =>
       expect(tasks.listTasks).toHaveBeenLastCalledWith(
-        expect.objectContaining({ status: "in_progress" }),
+        expect.objectContaining({ status: "cancelled" }),
         expect.any(AbortSignal)
       )
     )
     await user.click(screen.getByRole("button", { name: "Tickly" }))
     await waitFor(() =>
       expect(tasks.listTasks).toHaveBeenLastCalledWith(
-        expect.objectContaining({ status: "in_progress", topic: "Tickly" }),
+        expect.objectContaining({ status: "cancelled", topic: "Tickly" }),
         expect.any(AbortSignal)
       )
     )
 
     const summary = screen.getByRole("region", { name: "当前筛选" })
-    expect(summary).toHaveTextContent("In Progress · Tickly")
+    expect(summary).toHaveTextContent("Cancelled · Tickly")
     expect(screen.getByRole("status", { name: "筛选变化" })).toHaveTextContent(
-      "当前筛选：In Progress · Tickly"
+      "当前筛选：Cancelled · Tickly"
     )
     await user.click(
       within(summary).getByRole("button", { name: "清除主题筛选 Tickly" })
     )
     await waitFor(() =>
       expect(tasks.listTasks).toHaveBeenLastCalledWith(
-        expect.objectContaining({ status: "in_progress" }),
+        expect.objectContaining({ status: "cancelled" }),
         expect.any(AbortSignal)
       )
     )
@@ -436,10 +441,10 @@ describe("Todo 工作区", () => {
       undefined
     )
     expect(screen.getByRole("region", { name: "当前筛选" })).toHaveTextContent(
-      "In Progress"
+      "Cancelled"
     )
     expect(screen.getByRole("status", { name: "筛选变化" })).toHaveTextContent(
-      "当前筛选：In Progress"
+      "当前筛选：Cancelled"
     )
 
     expect(tasks.listTasks).not.toHaveBeenCalledWith(
@@ -686,6 +691,7 @@ describe("Task4 列表契约", () => {
     ["new", "还没有新任务。"],
     ["in_progress", "没有进行中的任务。"],
     ["completed", "还没有已完成的任务。"],
+    ["cancelled", "还没有已废弃的任务。"],
   ] satisfies [TaskStatusFilter, string][])(
     "%s 状态显示专属空文案",
     (status, message) => {
@@ -770,6 +776,7 @@ describe("Task3 筛选组件", () => {
 
     expect(screen.getByRole("button", { name: "全部" })).toBeDisabled()
     expect(screen.getByRole("button", { name: "Completed" })).toBeDisabled()
+    expect(screen.getByRole("button", { name: "Cancelled" })).toBeDisabled()
     expect(screen.getByRole("button", { name: "全部主题" })).toBeDisabled()
     expect(screen.getByRole("button", { name: "工作" })).toBeDisabled()
     expect(screen.getByRole("combobox", { name: "排序字段" })).toBeDisabled()
