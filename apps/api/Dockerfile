@@ -28,7 +28,8 @@ COPY --from=builder --chown=tickly:tickly /app/.venv /app/.venv
 COPY --chown=tickly:tickly apps/api/app /app/app
 COPY --chown=tickly:tickly apps/api/alembic.ini /app/alembic.ini
 COPY --chown=tickly:tickly apps/api/alembic /app/alembic
+COPY --chmod=0555 --chown=root:root apps/api/docker-entrypoint.sh /app/docker-entrypoint.sh
 
 USER tickly
 
-CMD ["python", "-m", "app.server"]
+CMD ["/bin/sh", "/app/docker-entrypoint.sh"]

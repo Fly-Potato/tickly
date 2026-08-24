@@ -47,10 +47,9 @@ docker compose -f compose.yaml -f compose.traefik.yaml config --quiet
 docker compose -f compose.yaml -f compose.traefik.yaml pull
 ```
 
-首次启动或升级前，先执行数据库 migration，再启动服务：
+首次启动或升级时，API 容器会先自动执行 `alembic upgrade head`，成功后才启动服务。迁移失败会使 API 容器退出，并阻止依赖它的 MCP 和 Web 进入可用状态：
 
 ```bash
-docker compose -f compose.yaml -f compose.traefik.yaml run --rm api python -m alembic upgrade head
 docker compose -f compose.yaml -f compose.traefik.yaml up --detach
 docker compose -f compose.yaml -f compose.traefik.yaml ps
 ```
@@ -88,11 +87,10 @@ curl --fail -i https://todo.example.com/mcp
 
 升级前记录当前镜像标签、三个镜像 digest、migration revision，并备份 `tickly-data` volume。SQLite 数据备份和恢复必须单独验证，不能用重启容器代替数据恢复。
 
-升级时修改 `.env` 的 `TICKLY_IMAGE_TAG`，然后重复拉取、migration 和启动：
+升级时修改 `.env` 的 `TICKLY_IMAGE_TAG`，然后拉取镜像并启动。API 容器会在对外提供服务前自动完成 migration：
 
 ```bash
 docker compose -f compose.yaml -f compose.traefik.yaml pull
-docker compose -f compose.yaml -f compose.traefik.yaml run --rm api python -m alembic upgrade head
 docker compose -f compose.yaml -f compose.traefik.yaml up --detach
 ```
 
@@ -115,4 +113,5 @@ docker compose -f compose.yaml -f compose.traefik.yaml ps
 - MCP `/ready` 返回 `503`：检查 API `/ready`、MCP HTTP client 生命周期和数据库 migration。
 - `/mcp` 返回 `421` 或 `403`：分别检查请求 Host 与 Origin 是否匹配 `.env` 白名单。
 - 工具返回 `mcp_account_unavailable`：确认数据库中恰好存在一个启用账号。
-- 容器反复退出：核对 VPS 是否使用了同一组镜像标签、`.env` 是否被 Compose 读取，以及 migration 是否在启动前完成。
+- API 容器退出：使用 `docker compose ... logs api` 检查自动 migration 错误；不要绕过失败迁移强制启动旧 schema 上的 API。
+- 容器反复退出：核对 VPS 是否使用了同一组镜像标签、`.env` 是否被 Compose 读取，以及自动 migration 是否成功完成。

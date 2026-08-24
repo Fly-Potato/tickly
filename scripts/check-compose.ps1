@@ -48,6 +48,35 @@ if ($config.services.web.depends_on.mcp.condition -ne "service_healthy") {
     throw "Web 必须等待 MCP healthy"
 }
 
+# API 默认启动必须先完成 migration；覆盖容器命令时仍可安全执行 CLI 和排障操作。
+$apiEntrypointPath = Join-Path $PSScriptRoot "../apps/api/docker-entrypoint.sh"
+if (-not (Test-Path -LiteralPath $apiEntrypointPath)) {
+    throw "API 镜像缺少自动 migration 启动脚本"
+}
+$apiEntrypointLines = @(Get-Content -LiteralPath $apiEntrypointPath)
+$migrationCommandIndex = [Array]::IndexOf(
+    $apiEntrypointLines,
+    "python -m alembic upgrade head"
+)
+$serverCommandIndex = [Array]::IndexOf(
+    $apiEntrypointLines,
+    "exec python -m app.server"
+)
+if (
+    $migrationCommandIndex -lt 0 -or
+    $serverCommandIndex -le $migrationCommandIndex
+) {
+    throw "API 启动脚本必须先执行 migration，再 exec 启动服务"
+}
+
+$apiDockerfile = Get-Content -Raw (Join-Path $PSScriptRoot "../apps/api/Dockerfile")
+if (
+    $apiDockerfile -notmatch '(?m)^COPY --chmod=0555 --chown=root:root apps/api/docker-entrypoint\.sh /app/docker-entrypoint\.sh$' -or
+    $apiDockerfile -notmatch '(?m)^CMD \["/bin/sh", "/app/docker-entrypoint\.sh"\]$'
+) {
+    throw "API Dockerfile 必须将自动 migration 脚本设为默认命令"
+}
+
 # 构建上下文必须排除 API 运行期数据库，避免把本地任务数据带进镜像层。
 $dockerIgnoreLines = @(Get-Content (Join-Path $PSScriptRoot "../.dockerignore"))
 foreach ($databaseRule in @(
