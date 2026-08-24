@@ -22,7 +22,7 @@
     {
       "id": 4,
       "prompt": "当前工作区根目录是 D:\\GitHub\\tickly。添加任务“补充登录页空状态”，没有其它要求。",
-      "expected_output": "用户未明确提供主题时，直接采用当前项目根目录名 tickly 作为主题，不调用 list_topics 或追问主题；只有无法可靠识别当前项目名时才询问。",
+      "expected_output": "用户未明确提供主题时，以当前项目根目录名 tickly 作为候选并调用 list_topics；如果没有语义等价的已有主题，使用精确值 tickly，不因缺少主题而追问。",
       "files": []
     },
     {
@@ -41,6 +41,24 @@
       "id": 7,
       "prompt": "把已废弃的父任务 #42 恢复为 New。",
       "expected_output": "先提示恢复父任务不会自动恢复子任务并等待明确确认；确认后仅用 set_task_status 修改 #42，随后再次调用 get_task 核验并按实际状态报告。",
+      "files": []
+    },
+    {
+      "id": 8,
+      "prompt": "当前项目根目录名是 test-center。添加任务“补充登录测试”，已有主题包含 Test Center 和其他项目。",
+      "expected_output": "先用 list_topics 读取已有精确主题；AI 判断 test-center 与 Test Center 在项目命名上语义等价，因只有一个高置信度匹配而直接复用 MCP 返回的精确值 Test Center，不新建 test-center 主题。",
+      "files": []
+    },
+    {
+      "id": 9,
+      "prompt": "把任务“检查用例”加到 test-center 主题；已有主题是 Test Center 和 test-center-api。",
+      "expected_output": "AI 将 Test Center 判断为 test-center 的高置信度语义等价项并复用该精确值；test-center-api 只是相关项目，不应因包含关系被视为同一主题。",
+      "files": []
+    },
+    {
+      "id": 10,
+      "prompt": "当前项目名是 qa-workbench，已有主题同时包含 QA Workbench 和 qa_workbench。添加任务“修复筛选”。",
+      "expected_output": "两个已有主题都可能与候选项目名语义等价，AI 不得擅自选择或新建主题；应列出 MCP 返回的精确候选并请用户确认，确认前不写入。",
       "files": []
     }
   ]
