@@ -139,16 +139,8 @@ function deferred<T>() {
   return { promise, resolve, reject }
 }
 
-function renderWorkspace(onLogout = vi.fn().mockResolvedValue(undefined)) {
-  render(
-    <TodoWorkspace
-      username="potato"
-      timeZone="Asia/Shanghai"
-      loggingOut={false}
-      onLogout={onLogout}
-    />
-  )
-  return { onLogout }
+function renderWorkspace() {
+  render(<TodoWorkspace timeZone="Asia/Shanghai" />)
 }
 
 beforeEach(() => {
@@ -158,7 +150,7 @@ beforeEach(() => {
 })
 
 describe("Todo 工作区", () => {
-  it("展示账号、父子任务语义、时间和退出入口，任务主体打开编辑面板", async () => {
+  it("展示父子任务语义和时间，任务主体打开编辑面板", async () => {
     const root = makeTask("root", {
       serial: 18,
       title: "完成阶段 4",
@@ -184,13 +176,11 @@ describe("Todo 工作区", () => {
       next_cursor: null,
     })
     const user = userEvent.setup()
-    const { onLogout } = renderWorkspace()
+    renderWorkspace()
 
     expect(
       await screen.findByRole("heading", { name: "Todo list" })
     ).toBeInTheDocument()
-    expect(screen.getByText("potato")).toBeInTheDocument()
-    expect(screen.getByText("Asia/Shanghai")).toBeInTheDocument()
     expect(screen.getByText("高优先级")).toBeInTheDocument()
     expect(screen.getByText("#18")).toBeInTheDocument()
     expect(screen.getByText("1/2 已处理")).toBeInTheDocument()
@@ -213,18 +203,11 @@ describe("Todo 工作区", () => {
     )
     expect(screen.getByText("仅用于展示匹配的子待办")).toBeInTheDocument()
 
-    const header = screen.getByRole("banner")
     const sidebar = screen.getByRole("complementary", { name: "任务筛选" })
     const listContent = screen.getByRole("region", { name: "Todo List" })
-    expect(header).toContainElement(screen.getByText("potato"))
-    expect(header).toContainElement(
-      screen.getByRole("button", { name: "退出登录" })
-    )
-    expect(header).not.toContainElement(sidebar)
-    expect(header).not.toContainElement(listContent)
-
-    await user.click(screen.getByRole("button", { name: "退出登录" }))
-    expect(onLogout).toHaveBeenCalledOnce()
+    expect(screen.queryByRole("banner")).not.toBeInTheDocument()
+    expect(document.body).toContainElement(sidebar)
+    expect(document.body).toContainElement(listContent)
 
     await user.click(screen.getByRole("button", { name: "编辑 完成阶段 4" }))
     expect(

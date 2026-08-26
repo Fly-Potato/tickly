@@ -1,6 +1,7 @@
 """MCP 到 Tickly API 单一 HTTP 边界的契约测试。"""
 
 from collections.abc import AsyncIterator, Awaitable, Callable
+import asyncio
 from datetime import UTC, datetime
 import json
 
@@ -65,6 +66,7 @@ async def call_with_transport(
     operation: Callable[[TicklyApiClient], Awaitable[object]],
     *,
     max_response_bytes: int = 1_048_576,
+    request_id_header: str = "X-Request-ID",
 ) -> object:
     """用真实 HTTPX 请求构造和解码路径驱动 client。"""
     transport = (
@@ -73,8 +75,189 @@ async def call_with_transport(
         else httpx.MockTransport(handler)
     )
     async with httpx.AsyncClient(transport=transport, base_url=BASE_URL) as http:
-        client = TicklyApiClient(http, max_response_bytes=max_response_bytes)
+        client = TicklyApiClient(
+            http,
+            max_response_bytes=max_response_bytes,
+            request_id_header=request_id_header,
+        )
         return await operation(client)
+
+
+@pytest.mark.asyncio
+async def test_verify_token_requires_exact_empty_204_and_forwards_security_context() -> None:
+    """认证验证必须逐请求透传原 PAT 与请求 ID，且只接受空 204。"""
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(204)
+
+    await call_with_transport(
+        handler,
+        lambda client: client.verify_token(token=TOKEN, request_id=REQUEST_ID),
+    )
+
+    assert len(requests) == 1
+    request = requests[0]
+    assert request.method == "POST"
+    assert request.url.path == "/internal/mcp/v1/auth/verify"
+    assert request.headers["Authorization"] == f"Bearer {TOKEN}"
+    assert request.headers["X-Request-ID"] == REQUEST_ID
+    assert request.content == b""
+
+
+@pytest.mark.asyncio
+async def test_verify_token_uses_configured_request_id_header() -> None:
+    """自定义关联头必须同时用于 transport 验证到 API 的请求。"""
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(204)
+
+    await call_with_transport(
+        handler,
+        lambda client: client.verify_token(token=TOKEN, request_id=REQUEST_ID),
+        request_id_header="X-Correlation-ID",
+    )
+
+    assert requests[0].headers["X-Correlation-ID"] == REQUEST_ID
+    assert "X-Request-ID" not in requests[0].headers
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("response", "expected_code"),
+    [
+        (
+            httpx.Response(
+                401,
+                json={"error": {"code": "authentication_required"}},
+            ),
+            "authentication_required",
+        ),
+        (
+            httpx.Response(503, json={"error": {"code": "database_busy"}}),
+            "upstream_unavailable",
+        ),
+        (httpx.Response(200, json={}), "upstream_contract_error"),
+        (httpx.Response(204, content=b"unexpected"), "upstream_contract_error"),
+        (
+            httpx.Response(401, json={"error": {"code": "unknown"}}),
+            "upstream_contract_error",
+        ),
+        (
+            httpx.Response(401, json={"error": {"code": "task_not_found"}}),
+            "upstream_contract_error",
+        ),
+    ],
+    ids=[
+        "invalid-token",
+        "upstream-503",
+        "status-200",
+        "204-with-body",
+        "unknown-401",
+        "non-auth-401",
+    ],
+)
+async def test_verify_token_maps_failures_without_echoing_token(
+    response: httpx.Response,
+    expected_code: str,
+) -> None:
+    """认证端点异常只能投影为固定错误，不能携带 PAT 或上游正文。"""
+    calls = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        return response
+
+    with pytest.raises(McpToolError) as raised:
+        await call_with_transport(
+            handler,
+            lambda client: client.verify_token(token=TOKEN, request_id=REQUEST_ID),
+        )
+
+    assert calls == 1
+    assert raised.value.code == expected_code
+    assert TOKEN not in str(raised.value)
+    assert "database_busy" not in str(raised.value)
+    assert raised.value.__cause__ is None
+    assert raised.value.__context__ is None
+
+
+@pytest.mark.asyncio
+async def test_verify_token_maps_network_and_oversize_without_retry() -> None:
+    """认证网络失败与超限响应都只请求一次并执行脱敏映射。"""
+    network_calls = 0
+
+    def network_handler(request: httpx.Request) -> httpx.Response:
+        nonlocal network_calls
+        network_calls += 1
+        raise httpx.ConnectError(f"内部地址 {TOKEN}", request=request)
+
+    with pytest.raises(McpToolError) as network_error:
+        await call_with_transport(
+            network_handler,
+            lambda client: client.verify_token(token=TOKEN, request_id=REQUEST_ID),
+        )
+
+    oversize_calls = 0
+
+    def oversize_handler(request: httpx.Request) -> httpx.Response:
+        nonlocal oversize_calls
+        oversize_calls += 1
+        return httpx.Response(204, content=b"too-large")
+
+    with pytest.raises(McpToolError) as oversize_error:
+        await call_with_transport(
+            oversize_handler,
+            lambda client: client.verify_token(token=TOKEN, request_id=REQUEST_ID),
+            max_response_bytes=4,
+        )
+
+    assert network_calls == oversize_calls == 1
+    assert network_error.value.code == "upstream_unavailable"
+    assert oversize_error.value.code == "upstream_contract_error"
+    assert TOKEN not in str(network_error.value)
+    assert network_error.value.__cause__ is None
+    assert network_error.value.__context__ is None
+
+
+@pytest.mark.asyncio
+async def test_concurrent_verifications_keep_user_tokens_separate() -> None:
+    """共享 client 的并发验证不得把不同用户的安全上下文写入实例状态。"""
+    requests: list[tuple[str, str]] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        await asyncio.sleep(0)
+        requests.append(
+            (request.headers["Authorization"], request.headers["X-Request-ID"])
+        )
+        return httpx.Response(204)
+
+    transport = httpx.MockTransport(handler)
+    async with httpx.AsyncClient(transport=transport, base_url=BASE_URL) as http:
+        client = TicklyApiClient(
+            http,
+            max_response_bytes=1_048_576,
+            request_id_header="X-Request-ID",
+        )
+        await asyncio.gather(
+            client.verify_token(
+                token="tickly_mcp_first.secret",
+                request_id="req-first",
+            ),
+            client.verify_token(
+                token="tickly_mcp_second.secret",
+                request_id="req-second",
+            ),
+        )
+
+    assert set(requests) == {
+        ("Bearer tickly_mcp_first.secret", "req-first"),
+        ("Bearer tickly_mcp_second.secret", "req-second"),
+    }
 
 
 @pytest.mark.asyncio
@@ -267,7 +450,7 @@ async def test_api_operations_use_exact_http_contract(
         (422, {"error": {"code": "validation_error"}}, "validation_error", "请求参数无效"),
         (422, {"error": {"code": "invalid_cursor"}}, "invalid_cursor", "分页游标无效"),
         (422, {"error": {"code": "invalid_task_relationship"}}, "invalid_task_relationship", "父待办关系无效"),
-        (503, {"error": {"code": "mcp_account_unavailable"}}, "mcp_account_unavailable", "MCP 账号不可用"),
+        (503, {"error": {"code": "mcp_account_unavailable"}}, "upstream_unavailable", "Tickly API 暂时不可用"),
         (503, {"error": {"code": "unexpected"}}, "upstream_unavailable", "Tickly API 暂时不可用"),
         (418, {"error": {"code": "unexpected"}}, "upstream_contract_error", "Tickly API 返回了无效响应"),
     ],
@@ -302,6 +485,36 @@ async def test_api_errors_map_to_stable_public_errors_without_retry(
     assert TOKEN not in error_text
     assert "不会泄漏的正文" not in error_text
     assert BASE_URL not in error_text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "known_code",
+    [
+        "authentication_required",
+        "task_not_found",
+        "invalid_cursor",
+        "invalid_task_relationship",
+        "validation_error",
+    ],
+)
+async def test_server_errors_cannot_impersonate_known_business_errors(
+    known_code: str,
+) -> None:
+    """任何 5xx 都必须先映射不可用，不能借正文伪装成可处理的 4xx。"""
+    with pytest.raises(McpToolError) as raised:
+        await call_with_transport(
+            lambda request: httpx.Response(
+                500,
+                json={"error": {"code": known_code}},
+            ),
+            lambda client: client.list_topics(
+                token=TOKEN,
+                request_id=REQUEST_ID,
+            ),
+        )
+
+    assert raised.value.code == "upstream_unavailable"
 
 
 @pytest.mark.asyncio

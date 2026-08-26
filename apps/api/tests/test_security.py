@@ -60,13 +60,48 @@ def test_dummy_password_verification_does_not_expose_a_result() -> None:
 
 
 def test_access_and_refresh_tokens_enforce_type_and_sid(settings: Settings) -> None:
-    access = issue_access_token("user-id", settings)
+    access = issue_access_token("user-id", 3, settings)
     refresh = issue_refresh_token("user-id", "session-id", settings)
 
-    assert decode_token(access, "access", settings).sub == "user-id"
+    access_payload = decode_token(access, "access", settings)
+    assert access_payload.sub == "user-id"
+    assert access_payload.ver == 3
     assert decode_token(refresh, "refresh", settings).sid == "session-id"
     with pytest.raises(InvalidToken):
         decode_token(access, "refresh", settings)
+
+
+@pytest.mark.parametrize("version", [None, True, "1", 0, -1])
+def test_access_token_rejects_missing_or_malformed_auth_version(
+    settings: Settings, version: object
+) -> None:
+    now = datetime.now(UTC)
+    claims: dict[str, object] = {
+        "sub": "user-id",
+        "jti": "token-id",
+        "type": "access",
+        "iss": settings.jwt_issuer,
+        "aud": settings.jwt_audience,
+        "iat": now,
+        "exp": now + timedelta(minutes=5),
+    }
+    if version is not None:
+        claims["ver"] = version
+    token = jwt.encode(claims, settings.jwt_secret, algorithm=settings.jwt_algorithm)
+
+    with pytest.raises(InvalidToken):
+        decode_token(token, "access", settings)
+
+
+def test_legacy_refresh_without_auth_version_remains_valid(
+    settings: Settings,
+) -> None:
+    token = issue_refresh_token("user-id", "session-id", settings)
+
+    payload = decode_token(token, "refresh", settings)
+
+    assert payload.sid == "session-id"
+    assert payload.ver is None
 
 
 def test_refresh_token_can_use_a_fixed_absolute_expiry(settings: Settings) -> None:
@@ -118,6 +153,7 @@ def test_invalid_or_missing_required_claims_are_rejected(
         "aud": settings.jwt_audience,
         "iat": now,
         "exp": now + timedelta(minutes=5),
+        "ver": 1,
     }
     claims.update(overrides)
     if removed_claim is not None:
@@ -132,7 +168,7 @@ def test_wrong_signature_is_rejected(settings: Settings) -> None:
     other_settings = Settings(
         jwt_secret="d" * 64, _env_file=None
     )
-    token = issue_access_token("user-id", other_settings)
+    token = issue_access_token("user-id", 1, other_settings)
 
     with pytest.raises(InvalidToken):
         decode_token(token, "access", settings)
@@ -149,6 +185,7 @@ def test_algorithm_is_restricted_to_the_configured_allowlist(settings: Settings)
             "aud": settings.jwt_audience,
             "iat": now,
             "exp": now + timedelta(minutes=5),
+            "ver": 1,
         },
         settings.jwt_secret,
         algorithm="HS384",

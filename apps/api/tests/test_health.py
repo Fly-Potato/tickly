@@ -1,9 +1,12 @@
+import logging
 from pathlib import Path
+from uuid import UUID
 
 from alembic import command
 from alembic.config import Config
 from fastapi.testclient import TestClient
 from sqlalchemy import text
+import pytest
 
 from app.core.config import Environment, Settings
 from app.db.session import create_engine_for_settings
@@ -99,26 +102,51 @@ def test_ready_rejects_database_without_migration(tmp_path: Path) -> None:
     engine.dispose()
 
 
-def test_ready_reports_unavailable_database(tmp_path: Path) -> None:
+def test_ready_reports_unavailable_database_without_logging_protocol_id(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     unavailable_path = tmp_path / "missing" / "tickly.db"
     settings = make_settings(unavailable_path)
     engine = create_engine_for_settings(settings)
     app = create_app(settings, database_engine=engine)
 
-    with TestClient(app) as client:
-        response = client.get(
-            "/ready",
-            headers={"X-Request-ID": "database-down"},
-        )
+    protocol_request_id = "b" * 64
+    caplog.clear()
+    root_logger = logging.getLogger()
+    readiness_logger = logging.getLogger("tickly.readiness")
+    readiness_was_disabled = readiness_logger.disabled
+    readiness_logger.disabled = False
+    root_logger.addHandler(caplog.handler)
+    try:
+        with TestClient(app) as client:
+            with caplog.at_level(logging.WARNING, logger="tickly.readiness"):
+                response = client.get(
+                    "/ready",
+                    headers={"X-Request-ID": protocol_request_id},
+                )
+    finally:
+        root_logger.removeHandler(caplog.handler)
+        readiness_logger.disabled = readiness_was_disabled
 
     assert response.status_code == 503
     assert response.json() == {
         "error": {
             "code": "database_unavailable",
             "message": "数据库不可用",
-            "request_id": "database-down",
+            "request_id": protocol_request_id,
             "details": [],
         }
     }
     assert str(unavailable_path) not in response.text
+    readiness_records = [
+        record
+        for record in caplog.records
+        if record.name == "tickly.readiness"
+        and record.getMessage() == "readiness.database_unavailable"
+    ]
+    assert len(readiness_records) == 1
+    assert readiness_records[0].request_id != protocol_request_id
+    UUID(readiness_records[0].request_id)
+    assert protocol_request_id not in caplog.text
     engine.dispose()

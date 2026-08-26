@@ -32,7 +32,7 @@ mise exec -- uv --directory apps/api run alembic downgrade base
 
 ## 创建账号
 
-第一版只允许一个账号，账号只能通过后端 CLI 创建和维护。密码至少 6 个字符，只通过交互式 `getpass` 输入：
+账号仍只通过后端 CLI 创建和维护，不改变现有注册方式。可以为不同用户名重复执行 `user create` 来创建多个账号；重复用户名会被拒绝。密码至少 6 个字符，只通过交互式 `getpass` 输入：
 
 ```bash
 mise exec -- uv --directory apps/api run python -m app.cli user create --username potato
@@ -41,7 +41,7 @@ mise exec -- uv --directory apps/api run python -m app.cli user deactivate --use
 mise exec -- uv --directory apps/api run python -m app.cli user revoke-sessions --username potato
 ```
 
-不提供公开注册、邮箱登录、账号重新激活或找回密码。
+不提供公开注册、邮箱登录、账号重新激活或找回密码。登录用户可以在 Web `/settings` 修改自己的密码；管理员仍可用上述 CLI 修改密码、停用账号或撤销 Web 会话。
 
 ## 环境变量
 
@@ -49,7 +49,7 @@ mise exec -- uv --directory apps/api run python -m app.cli user revoke-sessions 
 
 API 默认监听 `127.0.0.1:8321`。可在 `apps/api/.env` 设置 `TICKLY_HOST` 和 `TICKLY_PORT`；端口变化后同步设置 Web 的 `VITE_API_PROXY_TARGET`。
 
-本地 MCP 联调需要将同一个 `TICKLY_MCP_TOKEN_SHA256` 摘要配置到 API 和 MCP；原始 Token 只放在调用客户端环境中，不写入服务器 `.env`、日志或仓库。Token 生成和 Codex 配置见 [MCP 客户端说明](mcp.md)。
+MCP 服务只需要 API 地址和传输层 Host/Origin 白名单，不配置共享 Token。用户级原始 Token 只放在调用客户端的 `TICKLY_MCP_TOKEN` 环境变量中，不写入 API/MCP `.env`、日志或仓库。
 
 ## 启动服务
 
@@ -62,6 +62,8 @@ mise exec -- pnpm dev:mcp
 ```
 
 Web 使用 Vite 开发服务器，`/api` 默认代理到 `http://127.0.0.1:8321`。API 提供 `/health`、`/ready` 和 FastAPI 文档路由；`/ready` 还会检查数据库可访问且 migration revision 与代码中的 head 一致。
+
+服务启动后，按 Vite 终端输出打开 Web（默认端口为 `5173`），使用 CLI 创建的账号登录并进入 `/settings`。在设置页创建具名 MCP Token 后立即保存只显示一次的原始值，再按 [MCP 客户端说明](mcp.md) 配置 `http://127.0.0.1:8322/mcp`。一个用户可以为不同客户端分别创建和撤销多个 Token。
 
 ## 检查与测试
 

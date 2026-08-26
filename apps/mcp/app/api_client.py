@@ -21,7 +21,6 @@ _CONTRACT_ERROR = ("upstream_contract_error", "Tickly API 返回了无效响应"
 _UNAVAILABLE_ERROR = ("upstream_unavailable", "Tickly API 暂时不可用")
 _KNOWN_MESSAGES = {
     "authentication_required": "需要 MCP 认证",
-    "mcp_account_unavailable": "MCP 账号不可用",
     "task_not_found": "任务不存在",
     "invalid_cursor": "分页游标无效",
     "invalid_task_relationship": "父待办关系无效",
@@ -36,11 +35,18 @@ class TicklyApiClient:
     已提交事务之后，自动重试会造成重复创建或额外更新时间副作用。
     """
 
-    def __init__(self, http: httpx.AsyncClient, *, max_response_bytes: int) -> None:
+    def __init__(
+        self,
+        http: httpx.AsyncClient,
+        *,
+        max_response_bytes: int,
+        request_id_header: str,
+    ) -> None:
         self._http = http
         self._max_response_bytes = max_response_bytes
+        self._request_id_header = request_id_header
 
-    async def _request(
+    async def _send(
         self,
         method: str,
         path: str,
@@ -49,8 +55,12 @@ class TicklyApiClient:
         request_id: str,
         params: Mapping[str, object | None] | None = None,
         json: Mapping[str, object] | None = None,
-    ) -> dict[str, Any]:
-        """只发起一次请求；底层错误、内部地址和敏感正文均不进入公开错误。"""
+    ) -> httpx.Response:
+        """只发起一次有界请求，并丢弃含凭据的原始 request 与 headers。
+
+        Token 与请求 ID 只存在于本次调用的局部 headers；共享 client 不保存任何
+        当前用户状态，确保同一连接池可安全服务并发用户。
+        """
         query = (
             {key: value for key, value in params.items() if value is not None}
             if params is not None
@@ -64,7 +74,7 @@ class TicklyApiClient:
                 path,
                 headers={
                     "Authorization": f"Bearer {token}",
-                    "X-Request-ID": request_id,
+                    self._request_id_header: request_id,
                 },
                 params=query,
                 json=dict(json) if json is not None else None,
@@ -90,10 +100,63 @@ class TicklyApiClient:
             raise McpToolError(*_UNAVAILABLE_ERROR)
         if buffered_response is None:
             raise McpToolError(*_CONTRACT_ERROR)
-        return self._decode_response(buffered_response)
+        return buffered_response
+
+    async def _request(
+        self,
+        method: str,
+        path: str,
+        *,
+        token: str,
+        request_id: str,
+        params: Mapping[str, object | None] | None = None,
+        json: Mapping[str, object] | None = None,
+    ) -> dict[str, Any]:
+        """发送业务请求，并把有界响应解码为固定 JSON object 契约。"""
+        response = await self._send(
+            method,
+            path,
+            token=token,
+            request_id=request_id,
+            params=params,
+            json=json,
+        )
+        return self._decode_response(response)
+
+    async def verify_token(self, *, token: str, request_id: str) -> None:
+        """通过 API 权威验证当前请求 PAT；成功契约只能是空 204。"""
+        response = await self._send(
+            "POST",
+            "/internal/mcp/v1/auth/verify",
+            token=token,
+            request_id=request_id,
+        )
+        if response.status_code == 204 and response.content == b"":
+            return
+        if response.status_code == 401:
+            body: Any = None
+            try:
+                body = response.json()
+            except ValueError:
+                pass
+            error_body = body.get("error") if isinstance(body, dict) else None
+            code = error_body.get("code") if isinstance(error_body, dict) else None
+            if code == "authentication_required":
+                raise McpToolError(
+                    "authentication_required",
+                    _KNOWN_MESSAGES["authentication_required"],
+                )
+            raise McpToolError(*_CONTRACT_ERROR)
+        if response.status_code >= 500:
+            raise McpToolError(*_UNAVAILABLE_ERROR)
+        raise McpToolError(*_CONTRACT_ERROR)
 
     def _decode_response(self, response: httpx.Response) -> dict[str, Any]:
         """仅允许稳定错误码，未知响应失败关闭且不回显上游内容。"""
+        # 5xx 表示依赖不可用，必须先于正文解析；上游不能借错误正文把服务端
+        # 故障伪装成调用方可处理的认证、校验或资源不存在错误。
+        if response.status_code >= 500:
+            raise McpToolError(*_UNAVAILABLE_ERROR)
         body: Any = None
         parsed = False
         try:
@@ -111,8 +174,6 @@ class TicklyApiClient:
         code = error_body.get("code") if isinstance(error_body, dict) else None
         if isinstance(code, str) and code in _KNOWN_MESSAGES:
             raise McpToolError(code, _KNOWN_MESSAGES[code])
-        if response.status_code >= 500:
-            raise McpToolError(*_UNAVAILABLE_ERROR)
         raise McpToolError(*_CONTRACT_ERROR)
 
     async def _validated_request(

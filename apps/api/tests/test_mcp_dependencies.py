@@ -1,31 +1,25 @@
 from collections.abc import Iterator
+from datetime import timedelta
 import hashlib
 from pathlib import Path
-from types import SimpleNamespace
 
 from alembic import command
 from alembic.config import Config
 from fastapi.security import HTTPAuthorizationCredentials
 import pytest
-from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.api.mcp_dependencies import (
-    McpAccountUnavailable,
-    McpAuthenticationRequired,
-    get_mcp_current_user,
-    resolve_mcp_user,
-    verify_mcp_token,
-)
+from app.api.mcp_dependencies import get_mcp_current_user
 from app.core.config import Settings
 from app.core.errors import AppError
+from app.core.security import issue_access_token
 from app.db.session import create_engine_for_settings, create_session_factory
-from app.models import User
+from app.models.user import utc_now
 from app.services.accounts import create_account
+from app.services.mcp_tokens import create_mcp_token
 
 
-RAW_TOKEN = "test-mcp-token"
-TOKEN_HASH = hashlib.sha256(RAW_TOKEN.encode("utf-8")).hexdigest()
+PASSWORD = "correct horse battery staple"
 
 
 @pytest.fixture
@@ -39,125 +33,114 @@ def session(tmp_path: Path) -> Iterator[Session]:
     factory = create_session_factory(engine)
 
     with factory() as database_session:
-        create_account(database_session, "potato", "correct horse battery staple")
         yield database_session
 
     engine.dispose()
 
 
-def test_verify_mcp_token_accepts_only_matching_token() -> None:
-    settings = Settings(mcp_token_sha256=TOKEN_HASH, _env_file=None)
-
-    verify_mcp_token(RAW_TOKEN, settings)
-
-    with pytest.raises(McpAuthenticationRequired):
-        verify_mcp_token("wrong", settings)
+def bearer(raw_token: str) -> HTTPAuthorizationCredentials:
+    return HTTPAuthorizationCredentials(scheme="Bearer", credentials=raw_token)
 
 
-def test_verify_mcp_token_uses_constant_time_digest_comparison(
+def assert_authentication_required(
+    raised: pytest.ExceptionInfo[AppError], *hidden_values: str
+) -> None:
+    error = raised.value
+    assert error.status_code == 401
+    assert error.code == "authentication_required"
+    assert error.message == "需要 MCP 认证"
+    assert error.headers == {"WWW-Authenticate": "Bearer"}
+    rendered = str(error)
+    for hidden in hidden_values:
+        assert hidden not in rendered
+
+
+def test_get_mcp_current_user_resolves_token_owner(session: Session) -> None:
+    first = create_account(session, "first", PASSWORD)
+    second = create_account(session, "second", PASSWORD)
+    issued = create_mcp_token(session, second.id, "第二账号", None)
+
+    resolved = get_mcp_current_user(session, bearer(issued.raw_token))
+
+    assert resolved.id == second.id
+    assert resolved.id != first.id
+
+
+def test_get_mcp_current_user_maps_missing_credentials_to_bearer_challenge(
+    session: Session,
+) -> None:
+    with pytest.raises(AppError) as raised:
+        get_mcp_current_user(session, None)
+
+    assert_authentication_required(raised)
+
+
+@pytest.mark.parametrize("raw_token", ["wrong", "tickly_mcp_invalid.secret"])
+def test_get_mcp_current_user_hides_wrong_and_malformed_tokens(
+    session: Session,
+    raw_token: str,
+) -> None:
+    with pytest.raises(AppError) as raised:
+        get_mcp_current_user(session, bearer(raw_token))
+
+    assert_authentication_required(
+        raised,
+        raw_token,
+        hashlib.sha256(raw_token.encode("utf-8")).hexdigest(),
+    )
+
+
+@pytest.mark.parametrize("failure", ["expired", "revoked", "disabled"])
+def test_get_mcp_current_user_hides_token_lifecycle_failures(
+    session: Session,
+    failure: str,
+) -> None:
+    user = create_account(session, failure, PASSWORD)
+    issued = create_mcp_token(session, user.id, "生命周期", None)
+    if failure == "expired":
+        issued.record.expires_at = utc_now() - timedelta(seconds=1)
+    elif failure == "revoked":
+        issued.record.revoked_at = utc_now()
+    else:
+        user.is_active = False
+    session.commit()
+
+    with pytest.raises(AppError) as raised:
+        get_mcp_current_user(session, bearer(issued.raw_token))
+
+    assert_authentication_required(
+        raised,
+        issued.raw_token,
+        issued.record.token_hash,
+    )
+
+
+def test_get_mcp_current_user_rejects_web_access_jwt(session: Session) -> None:
+    settings = Settings(jwt_secret="s" * 64, _env_file=None)
+    user = create_account(session, "web-user", PASSWORD)
+    web_jwt = issue_access_token(user.id, user.auth_version, settings)
+
+    with pytest.raises(AppError) as raised:
+        get_mcp_current_user(session, bearer(web_jwt))
+
+    assert_authentication_required(
+        raised,
+        web_jwt,
+        hashlib.sha256(web_jwt.encode("utf-8")).hexdigest(),
+    )
+
+
+def test_get_mcp_current_user_does_not_hide_programming_errors(
+    session: Session,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    compared: list[tuple[str, str]] = []
+    def fail_unexpectedly(*_: object) -> None:
+        raise RuntimeError("programming error")
 
-    def record_compare(actual: str, expected: str) -> bool:
-        compared.append((actual, expected))
-        return actual == expected
-
-    monkeypatch.setattr("app.api.mcp_dependencies.secrets.compare_digest", record_compare)
-
-    verify_mcp_token(
-        RAW_TOKEN,
-        Settings(mcp_token_sha256=TOKEN_HASH, _env_file=None),
+    monkeypatch.setattr(
+        "app.api.mcp_dependencies.authenticate_mcp_token",
+        fail_unexpectedly,
     )
 
-    assert compared == [(TOKEN_HASH, TOKEN_HASH)]
-
-
-def test_verify_mcp_token_fails_closed_without_configuration() -> None:
-    with pytest.raises(McpAuthenticationRequired):
-        verify_mcp_token(RAW_TOKEN, Settings(_env_file=None))
-
-
-def test_resolve_mcp_user_returns_the_only_active_account(session: Session) -> None:
-    user = session.scalar(select(User))
-
-    assert user is not None
-    assert resolve_mcp_user(session).id == user.id
-
-
-def test_resolve_mcp_user_rejects_an_inactive_account(session: Session) -> None:
-    user = session.scalar(select(User))
-    assert user is not None
-    user.is_active = False
-    session.commit()
-
-    with pytest.raises(McpAccountUnavailable):
-        resolve_mcp_user(session)
-
-
-def test_resolve_mcp_user_rejects_an_empty_database(session: Session) -> None:
-    user = session.scalar(select(User))
-    assert user is not None
-    session.delete(user)
-    session.commit()
-
-    with pytest.raises(McpAccountUnavailable):
-        resolve_mcp_user(session)
-
-
-def test_resolve_mcp_user_rejects_multiple_accounts(session: Session) -> None:
-    session.add(User(username="second", password_hash="not-a-real-password-hash"))
-    session.commit()
-
-    with pytest.raises(McpAccountUnavailable):
-        resolve_mcp_user(session)
-
-
-def test_mcp_dependency_maps_missing_credentials_to_bearer_challenge(
-    session: Session,
-) -> None:
-    request = SimpleNamespace(
-        app=SimpleNamespace(
-            state=SimpleNamespace(
-                settings=Settings(mcp_token_sha256=TOKEN_HASH, _env_file=None)
-            )
-        )
-    )
-
-    with pytest.raises(AppError) as raised:
-        get_mcp_current_user(request, session, None)  # type: ignore[arg-type]
-
-    assert raised.value.status_code == 401
-    assert raised.value.code == "authentication_required"
-    assert raised.value.headers == {"WWW-Authenticate": "Bearer"}
-
-
-def test_mcp_dependency_maps_account_failure_without_exposing_details(
-    session: Session,
-) -> None:
-    user = session.scalar(select(User))
-    assert user is not None
-    user.is_active = False
-    session.commit()
-    request = SimpleNamespace(
-        app=SimpleNamespace(
-            state=SimpleNamespace(
-                settings=Settings(mcp_token_sha256=TOKEN_HASH, _env_file=None)
-            )
-        )
-    )
-    credentials = HTTPAuthorizationCredentials(
-        scheme="Bearer",
-        credentials=RAW_TOKEN,
-    )
-
-    with pytest.raises(AppError) as raised:
-        get_mcp_current_user(  # type: ignore[arg-type]
-            request,
-            session,
-            credentials,
-        )
-
-    assert raised.value.status_code == 503
-    assert raised.value.code == "mcp_account_unavailable"
-    assert raised.value.message == "MCP 账号不可用"
+    with pytest.raises(RuntimeError, match="programming error"):
+        get_mcp_current_user(session, bearer("wrong"))

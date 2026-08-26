@@ -1,7 +1,9 @@
 import hashlib
 from collections.abc import Iterator
 from datetime import UTC, datetime
+import logging
 from pathlib import Path
+from uuid import UUID
 
 import pytest
 from alembic import command
@@ -9,21 +11,21 @@ from alembic.config import Config
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 
-from app.api.mcp_dependencies import get_mcp_current_user
+from app.cli import main as cli_main
 from app.core.config import Environment, Settings
 from app.db.session import create_engine_for_settings, create_session_factory
 from app.main import create_app
 from app.models import Task, User
 from app.services.accounts import create_account
+from app.services.mcp_tokens import create_mcp_token, revoke_mcp_token
 
 
-RAW_TOKEN = "test-mcp-token"
-TOKEN_HASH = hashlib.sha256(RAW_TOKEN.encode("utf-8")).hexdigest()
+PASSWORD = "correct horse battery staple"
 
 
 @pytest.fixture
 def mcp_client(tmp_path: Path) -> Iterator[TestClient]:
-    """创建启用 MCP Token 且只有一个账号的真实 HTTP 测试应用。"""
+    """创建由数据库 Token 认证的真实 HTTP 测试应用。"""
 
     database_url = f"sqlite:///{tmp_path / 'mcp-tasks-api.db'}"
     config = Config("alembic.ini")
@@ -33,21 +35,38 @@ def mcp_client(tmp_path: Path) -> Iterator[TestClient]:
         environment=Environment.TEST,
         database_url=database_url,
         jwt_secret="s" * 64,
-        mcp_token_sha256=TOKEN_HASH,
         _env_file=None,
     )
     engine = create_engine_for_settings(settings)
     with create_session_factory(engine)() as session:
-        create_account(session, "potato", "correct horse battery staple")
+        user = create_account(session, "potato", PASSWORD)
+        issued = create_mcp_token(session, user.id, "测试 MCP", None)
     app = create_app(settings, database_engine=engine)
+    app.state.test_database_url = database_url
+    app.state.test_mcp_raw_token = issued.raw_token
+    app.state.test_mcp_token_id = issued.record.id
+    app.state.test_mcp_user_id = user.id
     with TestClient(app, raise_server_exceptions=False) as client:
         yield client
     engine.dispose()
 
 
 @pytest.fixture
-def mcp_headers() -> dict[str, str]:
-    return {"Authorization": f"Bearer {RAW_TOKEN}"}
+def mcp_headers(mcp_client: TestClient) -> dict[str, str]:
+    return bearer(mcp_client.app.state.test_mcp_raw_token)
+
+
+def bearer(token: str) -> dict[str, str]:
+    return {"Authorization": f"Bearer {token}"}
+
+
+def login(client: TestClient, username: str) -> str:
+    response = client.post(
+        "/api/v1/auth/login",
+        json={"username": username, "password": PASSWORD},
+    )
+    assert response.status_code == 200, response.text
+    return response.json()["access_token"]
 
 
 def add_task(
@@ -109,6 +128,8 @@ def test_internal_routes_require_mcp_token(
 
     assert response.status_code == 401
     assert response.json()["error"]["code"] == "authentication_required"
+    assert response.json()["error"]["message"] == "需要 MCP 认证"
+    assert response.headers["www-authenticate"] == "Bearer"
 
 
 def test_mcp_token_cannot_access_public_task_api(
@@ -119,6 +140,181 @@ def test_mcp_token_cannot_access_public_task_api(
 
     assert response.status_code == 401
     assert response.json()["error"]["code"] == "authentication_required"
+
+
+def test_cli_created_users_with_same_serial_are_isolated_over_http(
+    mcp_client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """真实 CLI 账号、Web 签发和内部资源请求共同证明账号级隔离。"""
+
+    monkeypatch.setenv(
+        "TICKLY_DATABASE_URL", mcp_client.app.state.test_database_url
+    )
+    monkeypatch.setenv("TICKLY_ENVIRONMENT", "test")
+    answers = iter([PASSWORD, PASSWORD, PASSWORD, PASSWORD])
+    monkeypatch.setattr("getpass.getpass", lambda _: next(answers))
+    assert cli_main(["user", "create", "--username", "cli-first"]) == 0
+    assert cli_main(["user", "create", "--username", "cli-second"]) == 0
+
+    first_access = login(mcp_client, "cli-first")
+    second_access = login(mcp_client, "cli-second")
+    first_token_response = mcp_client.post(
+        "/api/v1/mcp-tokens",
+        headers=bearer(first_access),
+        json={"name": "第一账号 MCP", "expires_in_days": 365},
+    )
+    second_token_response = mcp_client.post(
+        "/api/v1/mcp-tokens",
+        headers=bearer(second_access),
+        json={"name": "第二账号 MCP", "expires_in_days": None},
+    )
+    assert first_token_response.status_code == second_token_response.status_code == 201
+    first_mcp = first_token_response.json()["token"]
+    second_mcp = second_token_response.json()["token"]
+
+    first_task = mcp_client.post(
+        "/api/v1/tasks",
+        headers=bearer(first_access),
+        json={"title": "第一账号同号任务", "topic": "隔离"},
+    )
+    second_task = mcp_client.post(
+        "/api/v1/tasks",
+        headers=bearer(second_access),
+        json={"title": "第二账号同号任务", "topic": "隔离"},
+    )
+    assert first_task.status_code == second_task.status_code == 201
+    assert first_task.json()["serial"] == second_task.json()["serial"] == 1
+
+    first_detail = mcp_client.get(
+        "/internal/mcp/v1/tasks/1", headers=bearer(first_mcp)
+    )
+    second_detail = mcp_client.get(
+        "/internal/mcp/v1/tasks/1", headers=bearer(second_mcp)
+    )
+    web_blocked = mcp_client.get(
+        "/internal/mcp/v1/tasks/1", headers=bearer(first_access)
+    )
+    mcp_blocked = mcp_client.get(
+        "/api/v1/tasks", headers=bearer(first_mcp)
+    )
+
+    assert first_detail.status_code == second_detail.status_code == 200
+    assert first_detail.json()["title"] == "第一账号同号任务"
+    assert second_detail.json()["title"] == "第二账号同号任务"
+    assert "第二账号同号任务" not in first_detail.text
+    assert "第一账号同号任务" not in second_detail.text
+    assert web_blocked.status_code == mcp_blocked.status_code == 401
+    assert web_blocked.json()["error"]["code"] == "authentication_required"
+    assert mcp_blocked.json()["error"]["code"] == "authentication_required"
+
+
+def test_task_route_revalidates_after_transport_verification(
+    mcp_client: TestClient,
+    mcp_headers: dict[str, str],
+) -> None:
+    """transport 验证后撤销 Token，资源请求必须重新认证而不能复用结果。"""
+
+    add_task(mcp_client, serial=1, title="撤销竞态任务")
+    verified = mcp_client.post(
+        "/internal/mcp/v1/auth/verify",
+        headers=mcp_headers,
+    )
+    assert verified.status_code == 204
+    assert verified.content == b""
+
+    with mcp_client.app.state.database_session_factory() as session:
+        revoke_mcp_token(
+            session,
+            mcp_client.app.state.test_mcp_user_id,
+            mcp_client.app.state.test_mcp_token_id,
+        )
+
+    blocked = mcp_client.get(
+        "/internal/mcp/v1/tasks/1",
+        headers=mcp_headers,
+    )
+
+    assert blocked.status_code == 401
+    assert blocked.json()["error"]["code"] == "authentication_required"
+    assert blocked.headers["www-authenticate"] == "Bearer"
+
+
+def test_mcp_verify_preserves_protocol_id_but_logs_server_id(
+    mcp_client: TestClient,
+    mcp_headers: dict[str, str],
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """MCP→API 验证链路透传协议 ID，但访问日志不得写入该可控值。"""
+    protocol_request_id = mcp_client.app.state.test_mcp_raw_token
+    caplog.clear()
+    root_logger = logging.getLogger()
+    access_logger = logging.getLogger("tickly.access")
+    access_was_disabled = access_logger.disabled
+    access_logger.disabled = False
+    root_logger.addHandler(caplog.handler)
+    try:
+        with caplog.at_level(logging.INFO, logger="tickly.access"):
+            response = mcp_client.post(
+                "/internal/mcp/v1/auth/verify",
+                headers={**mcp_headers, "X-Request-ID": protocol_request_id},
+            )
+    finally:
+        root_logger.removeHandler(caplog.handler)
+        access_logger.disabled = access_was_disabled
+
+    records = [
+        record
+        for record in caplog.records
+        if record.name == "tickly.access"
+        and record.getMessage() == "request.completed"
+    ]
+    assert response.status_code == 204
+    assert response.headers["X-Request-ID"] == protocol_request_id
+    assert len(records) == 1
+    assert records[0].request_id != protocol_request_id
+    UUID(records[0].request_id)
+    assert protocol_request_id not in caplog.text
+
+
+def test_failed_mcp_authentication_keeps_request_id_and_hides_credentials(
+    mcp_client: TestClient,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """认证失败响应和安全日志都不得包含 PAT、摘要或 Web JWT。"""
+
+    caplog.set_level(logging.INFO)
+    with mcp_client.app.state.database_session_factory() as session:
+        issued = create_mcp_token(
+            session,
+            mcp_client.app.state.test_mcp_user_id,
+            "日志脱敏",
+            None,
+        )
+        raw_pat = issued.raw_token
+        digest = issued.record.token_hash
+        revoke_mcp_token(
+            session,
+            mcp_client.app.state.test_mcp_user_id,
+            issued.record.id,
+        )
+    web_jwt = login(mcp_client, "potato")
+
+    pat_response = mcp_client.get(
+        "/internal/mcp/v1/tasks/1",
+        headers={**bearer(raw_pat), "X-Request-ID": "mcp-pat-denied"},
+    )
+    jwt_response = mcp_client.get(
+        "/internal/mcp/v1/tasks/1",
+        headers={**bearer(web_jwt), "X-Request-ID": "mcp-jwt-denied"},
+    )
+
+    assert pat_response.status_code == jwt_response.status_code == 401
+    assert pat_response.json()["error"]["request_id"] == "mcp-pat-denied"
+    assert jwt_response.json()["error"]["request_id"] == "mcp-jwt-denied"
+    rendered = pat_response.text + jwt_response.text + caplog.text
+    for hidden in (raw_pat, digest, web_jwt):
+        assert hidden not in rendered
 
 
 def test_internal_detail_resolves_owned_task_by_serial(
@@ -179,7 +375,7 @@ def test_internal_list_keeps_complete_root_groups_and_cursor(
     assert second.json()["next_cursor"] is None
 
 
-def test_internal_topics_and_parent_options_keep_owned_static_route_semantics(
+def test_internal_topics_and_parent_options_keep_owned_route_semantics(
     mcp_client: TestClient,
     mcp_headers: dict[str, str],
 ) -> None:
@@ -250,12 +446,8 @@ def test_internal_detail_does_not_leak_another_accounts_same_serial(
 ) -> None:
     owned = add_task(mcp_client, serial=1, title="账号内任务")
     with mcp_client.app.state.database_session_factory() as session:
-        owner = session.get(User, owned.user_id)
-        assert owner is not None
-        other = User(username="other", password_hash="test-hash")
-        session.add(other)
-        session.commit()
-        owner_id = owner.id
+        other = create_account(session, "other", PASSWORD)
+        other_issued = create_mcp_token(session, other.id, "其他账号 MCP", None)
         other_id = other.id
     add_task(
         mcp_client,
@@ -264,29 +456,24 @@ def test_internal_detail_does_not_leak_another_accounts_same_serial(
         user_id=other_id,
     )
 
-    def resolve_owner() -> User:
-        with mcp_client.app.state.database_session_factory() as session:
-            resolved = session.get(User, owner_id)
-            assert resolved is not None
-            session.expunge(resolved)
-            return resolved
+    owned_response = mcp_client.get(
+        "/internal/mcp/v1/tasks/1",
+        headers=mcp_headers,
+    )
+    other_response = mcp_client.get(
+        "/internal/mcp/v1/tasks/1",
+        headers=bearer(other_issued.raw_token),
+    )
+    missing_response = mcp_client.get(
+        "/internal/mcp/v1/tasks/999",
+        headers=mcp_headers,
+    )
 
-    mcp_client.app.dependency_overrides[get_mcp_current_user] = resolve_owner
-    try:
-        owned_response = mcp_client.get(
-            "/internal/mcp/v1/tasks/1",
-            headers=mcp_headers,
-        )
-        missing_response = mcp_client.get(
-            "/internal/mcp/v1/tasks/999",
-            headers=mcp_headers,
-        )
-    finally:
-        mcp_client.app.dependency_overrides.clear()
-
-    assert owned_response.status_code == 200
+    assert owned_response.status_code == other_response.status_code == 200
     assert owned_response.json()["title"] == "账号内任务"
+    assert other_response.json()["title"] == "其他账号同号任务"
     assert "其他账号同号任务" not in owned_response.text
+    assert "账号内任务" not in other_response.text
     assert missing_response.status_code == 404
     assert missing_response.json()["error"]["code"] == "task_not_found"
 
@@ -327,12 +514,15 @@ def test_internal_serial_rejects_values_outside_sqlite_integer_range(
     assert response.json()["error"]["code"] == "validation_error"
 
 
-def test_internal_routes_are_absent_from_public_openapi(
+def test_settings_routes_are_public_but_internal_mcp_routes_stay_hidden(
     mcp_client: TestClient,
 ) -> None:
     paths = mcp_client.get("/openapi.json").json()["paths"]
 
-    assert not any(path.startswith("/internal/mcp/") for path in paths)
+    assert "/api/v1/account/password" in paths
+    assert "/api/v1/mcp-tokens" in paths
+    assert "/internal/mcp/v1/auth/verify" not in paths
+    assert "/internal/mcp/v1/tasks/{serial}" not in paths
 
 
 def test_internal_create_resolves_parent_serial_in_same_account(
@@ -387,12 +577,7 @@ def test_internal_create_rejects_cross_account_parent_serial(
     mcp_headers: dict[str, str],
 ) -> None:
     with mcp_client.app.state.database_session_factory() as session:
-        owner = session.scalar(select(User))
-        assert owner is not None
-        other = User(username="other-parent", password_hash="test-hash")
-        session.add(other)
-        session.commit()
-        owner_id = owner.id
+        other = create_account(session, "other-parent", PASSWORD)
         other_id = other.id
     add_task(
         mcp_client,
@@ -401,22 +586,11 @@ def test_internal_create_rejects_cross_account_parent_serial(
         user_id=other_id,
     )
 
-    def resolve_owner() -> User:
-        with mcp_client.app.state.database_session_factory() as session:
-            resolved = session.get(User, owner_id)
-            assert resolved is not None
-            session.expunge(resolved)
-            return resolved
-
-    mcp_client.app.dependency_overrides[get_mcp_current_user] = resolve_owner
-    try:
-        response = mcp_client.post(
-            "/internal/mcp/v1/tasks",
-            headers=mcp_headers,
-            json={"title": "越权子任务", "topic": "工作", "parent_serial": 1},
-        )
-    finally:
-        mcp_client.app.dependency_overrides.clear()
+    response = mcp_client.post(
+        "/internal/mcp/v1/tasks",
+        headers=mcp_headers,
+        json={"title": "越权子任务", "topic": "工作", "parent_serial": 1},
+    )
 
     assert response.status_code == 422
     assert response.json()["error"]["code"] == "invalid_task_relationship"

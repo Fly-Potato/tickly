@@ -22,7 +22,11 @@ class RequestIdMiddleware:
             return
         supplied = Headers(scope=scope).get(self.header_name)
         request_id = supplied if supplied and REQUEST_ID_PATTERN.fullmatch(supplied) else str(uuid4())
+        # protocol request ID 可由客户端指定并继续回传/跨服务透传；日志关联 ID
+        # 必须独立生成，避免 PAT、摘要或业务标识借合法 header 注入日志。
+        log_request_id = str(uuid4())
         scope.setdefault("state", {})["request_id"] = request_id
+        scope["state"]["log_request_id"] = log_request_id
         started = perf_counter()
         response_status = 500
 
@@ -37,4 +41,4 @@ class RequestIdMiddleware:
         try:
             await self.app(scope, receive, send_with_request_id)
         finally:
-            access_logger.info("request.completed", extra={"request_id": request_id, "method": scope["method"], "path": scope["path"], "status": response_status, "duration_ms": round((perf_counter() - started) * 1000, 3)})
+            access_logger.info("request.completed", extra={"request_id": log_request_id, "method": scope["method"], "path": scope["path"], "status": response_status, "duration_ms": round((perf_counter() - started) * 1000, 3)})

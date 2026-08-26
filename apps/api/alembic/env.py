@@ -12,7 +12,8 @@ from app import models  # noqa: F401  # 导入模型以注册所有表，供 Ale
 config = context.config
 
 if config.config_file_name is not None:
-    fileConfig(config.config_file_name)
+    # Alembic 也会被测试和维护脚本同进程调用，不能因此永久禁用应用日志器。
+    fileConfig(config.config_file_name, disable_existing_loggers=False)
 
 target_metadata = Base.metadata
 

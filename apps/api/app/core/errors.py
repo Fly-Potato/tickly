@@ -26,6 +26,11 @@ def request_id_from(request: Request) -> str:
     return getattr(request.state, "request_id", "unknown")
 
 
+def log_request_id_from(request: Request) -> str:
+    """只返回服务端生成的日志关联 ID，不回退到客户端 protocol ID。"""
+    return getattr(request.state, "log_request_id", "unknown")
+
+
 def error_content(request: Request, *, code: str, message: str, details: list[dict[str, Any]] | None = None) -> dict[str, Any]:
     return {"error": {"code": code, "message": message, "request_id": request_id_from(request), "details": details or []}}
 
@@ -56,7 +61,7 @@ async def handle_http_error(request: Request, exc: StarletteHTTPException) -> JS
 
 
 async def handle_unexpected_error(request: Request, exc: Exception) -> JSONResponse:
-    logger.exception("request.failed", extra={"request_id": request_id_from(request)})
+    logger.exception("request.failed", extra={"request_id": log_request_id_from(request)})
     return JSONResponse(status_code=500, content=error_content(request, code="internal_error", message="服务器内部错误"), headers=response_headers(request))
 
 

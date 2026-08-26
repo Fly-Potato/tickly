@@ -4,9 +4,6 @@ from pydantic import ValidationError
 from app.config import Environment, Settings
 
 
-VALID_HASH = "a" * 64
-
-
 def test_defaults_are_local_and_use_a_distinct_port() -> None:
     settings = Settings(_env_file=None)
 
@@ -14,62 +11,39 @@ def test_defaults_are_local_and_use_a_distinct_port() -> None:
     assert str(settings.host) == "127.0.0.1"
     assert settings.port == 8322
     assert str(settings.api_base_url) == "http://127.0.0.1:8321"
-    assert settings.token_sha256 is None
+    assert not hasattr(settings, "token_sha256")
     assert settings.allowed_hosts == ["127.0.0.1:*", "localhost:*"]
 
 
-@pytest.mark.parametrize("value", ["", "abc", "g" * 64, "a" * 63, "a" * 65])
-def test_token_hash_must_be_lowercase_sha256(value: str) -> None:
-    with pytest.raises(ValidationError):
-        Settings(token_sha256=value, _env_file=None)
-
-
-def test_invalid_token_hash_error_does_not_echo_sensitive_input() -> None:
-    sentinel = "mcp-token-config-sentinel-do-not-leak"
-
-    with pytest.raises(ValidationError) as error:
-        Settings(token_sha256=sentinel, _env_file=None)
-
-    message = str(error.value)
-    assert "token_sha256" in message
-    assert "value_error" in message
-    assert "input_value" not in message
-    assert "input_type" not in message
-    assert sentinel not in message
-
-
-def test_production_missing_token_hash_does_not_echo_environment_value(
+def test_legacy_token_hash_environment_is_ignored(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    sentinel = "mcp-config-environment-sentinel"
-    monkeypatch.setenv("TICKLY_MCP_ENVIRONMENT", "production")
-    monkeypatch.delenv("TICKLY_MCP_TOKEN_SHA256", raising=False)
-    monkeypatch.setenv(
-        "TICKLY_MCP_API_BASE_URL", f"https://{sentinel}.example.com"
-    )
+    """旧静态摘要变量必须被忽略，且不能重新出现在 Settings 表面。"""
+    monkeypatch.setenv("TICKLY_MCP_TOKEN_SHA256", "legacy-static-digest")
 
-    with pytest.raises(ValidationError) as error:
-        Settings(_env_file=None)
+    settings = Settings(_env_file=None)
 
-    message = str(error.value)
-    assert "production token_sha256 is required" in message
-    assert "input_value" not in message
-    assert "input_type" not in message
-    assert sentinel not in message
+    assert "token_sha256" not in type(settings).model_fields
+    assert "token_sha256" not in settings.model_dump()
 
 
-def test_production_requires_token_hash_and_transport_allowlists() -> None:
+def test_production_requires_transport_allowlists_but_not_static_token_hash() -> None:
+    """生产配置只保留传输白名单，用户 PAT 由 API 动态验证。"""
     with pytest.raises(ValidationError):
-        Settings(environment=Environment.PRODUCTION, _env_file=None)
+        Settings(
+            environment=Environment.PRODUCTION,
+            allowed_hosts=[],
+            allowed_origins=[],
+            _env_file=None,
+        )
 
     settings = Settings(
         environment=Environment.PRODUCTION,
-        token_sha256=VALID_HASH,
         allowed_hosts=["tickly.example.com"],
         allowed_origins=["https://tickly.example.com"],
         _env_file=None,
     )
-    assert settings.token_sha256 is not None
+    assert settings.environment is Environment.PRODUCTION
 
 
 @pytest.mark.parametrize(
@@ -152,3 +126,64 @@ def test_transport_allowlists_accept_sdk_patterns(
 def test_timeouts_must_be_positive(field: str) -> None:
     with pytest.raises(ValidationError):
         Settings(**{field: 0}, _env_file=None)
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "",
+        "contains space",
+        "X-Request-ID\r\nInjected",
+        "X:Request-ID",
+        "X-请求-ID",
+        "Authorization",
+        "authorization",
+        "Host",
+        "Origin",
+        "Content-Type",
+        "Accept",
+        "MCP-Protocol-Version",
+        "MCP-Session-ID",
+        "connection",
+        "CoNnEcTiOn",
+        "content-length",
+        "CoNtEnT-LeNgTh",
+        "transfer-encoding",
+        "TrAnSfEr-EnCoDiNg",
+        "te",
+        "TE",
+        "trailer",
+        "TrAiLeR",
+        "upgrade",
+        "UpGrAdE",
+        "www-authenticate",
+        "WwW-AuThEnTiCaTe",
+    ],
+)
+def test_request_id_header_rejects_invalid_or_reserved_names(value: str) -> None:
+    """关联头不得覆盖凭据、消息分帧或 MCP transport 头。"""
+    with pytest.raises(ValidationError):
+        Settings(request_id_header=value, _env_file=None)
+
+
+def test_request_id_header_error_does_not_echo_input() -> None:
+    """配置错误不得回显输入，避免未来误把敏感值拼入关联头配置。"""
+    sentinel = "mcp-config-header-sentinel-do-not-leak"
+
+    with pytest.raises(ValidationError) as error:
+        Settings(
+            request_id_header=f"X-Request-ID\r\n{sentinel}",
+            _env_file=None,
+        )
+
+    message = str(error.value)
+    assert "request_id_header" in message
+    assert "input_value" not in message
+    assert "input_type" not in message
+    assert sentinel not in message
+
+
+def test_request_id_header_accepts_rfc_token_name() -> None:
+    settings = Settings(request_id_header="X-Correlation-ID", _env_file=None)
+
+    assert settings.request_id_header == "X-Correlation-ID"

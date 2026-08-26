@@ -1,13 +1,16 @@
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
 from alembic import command
 from alembic.config import Config
 from fastapi.testclient import TestClient
 from sqlalchemy import select, text
+from sqlalchemy.exc import OperationalError
 
 from app.api.dependencies import DbSession, get_db_session
 from app.core.config import Environment, Settings
+from app.core.errors import AppError
 from app.db.session import (
     create_engine_for_settings,
     create_session_factory,
@@ -64,6 +67,100 @@ def test_session_dependency_rolls_back_when_request_fails(tmp_path: Path) -> Non
 
     assert count == 0
     engine.dispose()
+
+
+class CleanupFailingSession:
+    """模拟 cleanup 中数据库驱动失败，记录 Session 是否被主动废弃。"""
+
+    def __init__(self, *, rollback_error: Exception, close_error: Exception) -> None:
+        self.rollback_error = rollback_error
+        self.close_error = close_error
+        self.invalidate_count = 0
+
+    def rollback(self) -> None:
+        raise self.rollback_error
+
+    def close(self) -> None:
+        raise self.close_error
+
+    def invalidate(self) -> None:
+        self.invalidate_count += 1
+
+
+def cleanup_database_error(sentinel: str) -> OperationalError:
+    return OperationalError(
+        f"ROLLBACK /* {sentinel} */",
+        {"secret": sentinel},
+        RuntimeError(sentinel),
+    )
+
+
+def test_session_dependency_preserves_original_error_when_cleanup_database_fails(
+) -> None:
+    session = CleanupFailingSession(
+        rollback_error=cleanup_database_error("rollback-cleanup-secret"),
+        close_error=cleanup_database_error("close-cleanup-secret"),
+    )
+    request = SimpleNamespace(
+        app=SimpleNamespace(
+            state=SimpleNamespace(database_session_factory=lambda: session)
+        )
+    )
+    dependency = get_db_session(request)  # type: ignore[arg-type]
+    next(dependency)
+    original = AppError(
+        status_code=500,
+        code="internal_error",
+        message="服务器内部错误",
+    )
+
+    with pytest.raises(AppError) as captured:
+        dependency.throw(original)
+
+    assert captured.value is original
+    assert session.invalidate_count == 2
+
+
+def test_session_dependency_discards_session_when_close_database_fails() -> None:
+    session = CleanupFailingSession(
+        rollback_error=AssertionError("成功请求不应 rollback"),
+        close_error=cleanup_database_error("close-success-secret"),
+    )
+    request = SimpleNamespace(
+        app=SimpleNamespace(
+            state=SimpleNamespace(database_session_factory=lambda: session)
+        )
+    )
+    dependency = get_db_session(request)  # type: ignore[arg-type]
+    next(dependency)
+
+    with pytest.raises(StopIteration):
+        next(dependency)
+
+    assert session.invalidate_count == 1
+
+
+def test_session_dependency_does_not_hide_cleanup_programmer_error() -> None:
+    session = CleanupFailingSession(
+        rollback_error=RuntimeError("cleanup programmer error"),
+        close_error=cleanup_database_error("unreached-close-secret"),
+    )
+    request = SimpleNamespace(
+        app=SimpleNamespace(
+            state=SimpleNamespace(database_session_factory=lambda: session)
+        )
+    )
+    dependency = get_db_session(request)  # type: ignore[arg-type]
+    next(dependency)
+
+    with pytest.raises(RuntimeError, match="cleanup programmer error"):
+        dependency.throw(
+            AppError(
+                status_code=500,
+                code="internal_error",
+                message="服务器内部错误",
+            )
+        )
 
 
 def test_request_session_uses_application_engine(tmp_path: Path) -> None:

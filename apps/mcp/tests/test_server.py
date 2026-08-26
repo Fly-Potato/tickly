@@ -13,7 +13,6 @@ def test_run_server_passes_validated_settings_to_uvicorn(monkeypatch: Any) -> No
         environment=Environment.TEST,
         host="0.0.0.0",
         port=9444,
-        token_sha256="a" * 64,
         _env_file=None,
     )
     calls: list[tuple[tuple[Any, ...], dict[str, Any]]] = []

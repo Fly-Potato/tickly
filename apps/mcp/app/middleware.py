@@ -1,6 +1,6 @@
 """MCP HTTP 入口与工具协议层执行的安全中间件。"""
 
-from collections.abc import Mapping
+from collections.abc import Awaitable, Callable, Mapping
 import logging
 import re
 from time import perf_counter
@@ -14,7 +14,8 @@ from starlette.datastructures import Headers, MutableHeaders
 from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
-from app.auth import bearer_matches, token_from_authorization
+from app.auth import token_from_authorization
+from app.errors import McpToolError
 
 
 REQUEST_ID_PATTERN = re.compile(r"^[A-Za-z0-9._-]{1,128}$")
@@ -94,33 +95,64 @@ class RequestIdMiddleware:
             )
 
 
-class StaticBearerMiddleware:
-    """在任何 MCP 协议或传输错误可见前校验静态凭据。
+TokenVerifier = Callable[[str, str], Awaitable[None]]
 
-    明文 Token 只保留在当前请求 header/state 中，既不写入配置，也不进入
-    错误正文。`/health` 与 `/ready` 是容器探针，刻意保持公开。
+
+async def _auth_response(scope: Scope, receive: Receive, send: Send) -> None:
+    """发送不包含失败细节的固定 Bearer challenge。"""
+    response = JSONResponse(
+        {"error": "authentication_required"},
+        status_code=401,
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+    await response(scope, receive, send)
+
+
+class ApiBearerMiddleware:
+    """在协议解析前把 Bearer 交给 API 权威验证，且不缓存认证结果。
+
+    明文 PAT 只保留在当前 ASGI request scope；共享 middleware 与 lifecycle
+    不保存当前用户，避免并发请求互相污染。`/health` 与 `/ready` 保持公开。
     """
 
-    def __init__(self, app: ASGIApp, *, expected_sha256: str | None) -> None:
+    def __init__(
+        self,
+        app: ASGIApp,
+        *,
+        verifier: TokenVerifier,
+        request_id_header: str,
+    ) -> None:
         self.app = app
-        self.expected_sha256 = expected_sha256
+        self.verifier = verifier
+        self.request_id_header = request_id_header
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] != "http" or scope.get("path") in PUBLIC_PATHS:
             await self.app(scope, receive, send)
             return
 
-        token = token_from_authorization(Headers(scope=scope).get("Authorization"))
-        if token is None or not bearer_matches(token, self.expected_sha256):
-            response = JSONResponse(
-                {"error": "authentication_required"},
-                status_code=401,
-                headers={"WWW-Authenticate": "Bearer"},
-            )
-            await response(scope, receive, send)
+        headers = Headers(scope=scope)
+        token = token_from_authorization(headers.get("Authorization"))
+        request_id = headers.get(self.request_id_header)
+        if token is None or request_id is None:
+            await _auth_response(scope, receive, send)
             return
 
-        # 后续工具只可从已通过本中间件的请求上下文取得明文凭据。
+        try:
+            await self.verifier(token, request_id)
+        except McpToolError as error:
+            # 上游异常对象可能持有敏感上下文；只读取固定错误码并返回固定正文。
+            if error.code == "authentication_required":
+                await _auth_response(scope, receive, send)
+            else:
+                response = JSONResponse(
+                    {"error": "upstream_unavailable"},
+                    status_code=503,
+                )
+                await response(scope, receive, send)
+            return
+
+        # 后续工具只可从本次已通过 API 验证的请求上下文取得明文凭据。
         scope.setdefault("state", {})["mcp_token"] = token
         await self.app(scope, receive, send)
 

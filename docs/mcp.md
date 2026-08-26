@@ -1,6 +1,8 @@
 # Tickly MCP 客户端
 
-Tickly MCP 通过无状态 Streamable HTTP `/mcp` 提供当前账号的受限 Todo 能力。MCP 只调用 API 的内部契约，不直接访问 SQLite，也不能访问公开 Todo API。
+Tickly MCP 通过无状态 Streamable HTTP `/mcp` 提供 Token 所属账号的受限 Todo 能力。每个账号可以创建多个具名个人访问令牌（PAT）；不同账号即使拥有相同的任务 `serial`，读取和写入也始终按 Token 所属账号隔离。
+
+MCP 网关不访问 SQLite，也不保存用户或 Token 摘要。每个受保护请求都先把 Bearer Token 交给 API 验证；工具调用再把同一个 Bearer Token 透传给内部任务 API，由 API 再次验证并解析用户身份。客户端不能传入或伪造 `user_id`，MCP 也不能访问公开 Todo API。
 
 ## 工具清单
 
@@ -30,30 +32,15 @@ MCP 不提供删除、批量写入、任意 HTTP 转发或 SQL 工具。任务�
 - 需要检索时优先把关键词传给 `list_tasks.query`；它会匹配任务主题、标题和描述，并与状态、主题筛选按 AND 语义组合。
 - 删除请求必须明确说明当前 MCP 没有删除能力，不得用清空字段或改状态伪造删除。
 
-## Token 配置
+## 创建与维护 Token
 
-在启动 Codex 的主机生成原始 Token，并只输出其小写 SHA-256 摘要。PowerShell 示例：
+1. 使用 CLI 创建的账号登录 Web，进入 `/settings`。
+2. 为设备或用途填写 Token 名称，并选择 90 天、365 天（默认）或永不过期。
+3. 创建成功后立即把原始 Token 保存到对应客户端的秘密存储。原始值只显示一次；列表、日志和数据库都不能用来找回它。
 
-```powershell
-$env:TICKLY_MCP_TOKEN = [Convert]::ToHexString(
-  [Security.Cryptography.RandomNumberGenerator]::GetBytes(32)
-).ToLowerInvariant()
-$tokenHash = [Convert]::ToHexString(
-  [Security.Cryptography.SHA256]::HashData(
-    [Text.Encoding]::UTF8.GetBytes($env:TICKLY_MCP_TOKEN)
-  )
-).ToLowerInvariant()
-$tokenHash
-```
+同一用户可以同时保留多个 Token，适合为家中电脑、办公电脑和自动化进程分别签发。轮换时先创建新 Token、更新并验证目标客户端，再在设置页撤销旧 Token；撤销只影响选中的凭据，不影响该用户的其他 Token。永不过期 Token 仍应按设备边界定期轮换。
 
-POSIX shell 示例：
-
-```bash
-export TICKLY_MCP_TOKEN="$(openssl rand -hex 32)"
-printf %s "$TICKLY_MCP_TOKEN" | sha256sum | cut -d ' ' -f 1
-```
-
-将摘要配置到服务器根 `.env` 的 `TICKLY_MCP_TOKEN_SHA256`。API 和 MCP 必须使用同一个摘要；原始 `TICKLY_MCP_TOKEN` 只保存在调用客户端的安全环境中。
+已撤销、已到期或属于停用账号的 Token 都会在后续请求中得到 `401 authentication_required`。修改 Web 密码不会自动撤销 MCP Token；需要失效设备凭据时必须在设置页单独撤销。
 
 ## Codex 配置
 
@@ -64,5 +51,7 @@ codex mcp add tickly --url https://tickly.example.com/mcp --bearer-token-env-var
 ```
 
 将示例域名替换为真实可信的 HTTPS 入口。远程 Bearer Token 使用 `--bearer-token-env-var`；启动 Codex 的进程必须能读取该环境变量。
+
+先通过客户端的安全输入或秘密管理器把设置页返回的原始值注入 `TICKLY_MCP_TOKEN`，再运行上述命令。不要把原始 Token 直接写进命令行参数、Shell 历史、Codex 配置、服务器环境或日志。本命令语法已按当前 `codex mcp add --help` 核对；URL 必须包含实际 Streamable HTTP 路径 `/mcp`。
 
 连接后先执行只读工具 smoke，再按客户端的写操作审批策略验证写工具。公网 HTTPS、Host/Origin 白名单和生产部署验收见 [VPS 部署说明](mcp-client-deployment.md)。

@@ -14,50 +14,84 @@ export type TokenResponse = {
 }
 
 let accessToken: string | null = null
-let refreshPromise: Promise<TokenResponse> | null = null
+let authenticationGeneration = 0
+let refreshOperation: {
+  generation: number
+  promise: Promise<TokenResponse>
+} | null = null
 let authenticationFailureHandler: (() => void) | null = null
+
+class StaleAuthenticationOperationError extends Error {
+  constructor() {
+    super("认证操作已失效")
+    this.name = "StaleAuthenticationOperationError"
+  }
+}
 
 export function setAccessToken(token: string | null) {
   accessToken = token
 }
 
-export function setAuthenticationFailureHandler(
-  handler: (() => void) | null,
-) {
+export function invalidateAuthentication() {
+  authenticationGeneration += 1
+  setAccessToken(null)
+}
+
+export function setAuthenticationFailureHandler(handler: (() => void) | null) {
   authenticationFailureHandler = handler
 }
 
 export async function login(
   username: string,
-  password: string,
+  password: string
 ): Promise<TokenResponse> {
-  const token = await requestJson<TokenResponse>("/api/v1/auth/login", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ username, password }),
-  })
-  setAccessToken(token.access_token)
-  return token
+  const generation = authenticationGeneration
+  try {
+    const token = await requestJson<TokenResponse>("/api/v1/auth/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username, password }),
+    })
+    assertCurrentGeneration(generation)
+    setAccessToken(token.access_token)
+    return token
+  } catch (error) {
+    if (!isCurrentGeneration(generation)) {
+      throw new StaleAuthenticationOperationError()
+    }
+    throw error
+  }
 }
 
 export async function refreshAccessToken(): Promise<TokenResponse> {
-  if (refreshPromise === null) {
-    refreshPromise = requestJson<TokenResponse>("/api/v1/auth/refresh", {
-      method: "POST",
-    })
-      .then((token) => {
-        setAccessToken(token.access_token)
-        return token
-      })
-      .catch((error: unknown) => {
-        notifyAuthenticationFailure()
-        throw error
-      })
-      .finally(() => {
-        refreshPromise = null
-      })
+  const generation = authenticationGeneration
+  if (refreshOperation !== null && refreshOperation.generation === generation) {
+    return refreshOperation.promise
   }
-  return refreshPromise
+
+  const promise = requestJson<TokenResponse>("/api/v1/auth/refresh", {
+    method: "POST",
+  })
+    .then((token) => {
+      assertCurrentGeneration(generation)
+      setAccessToken(token.access_token)
+      return token
+    })
+    .catch((error: unknown) => {
+      if (!isCurrentGeneration(generation)) {
+        throw new StaleAuthenticationOperationError()
+      }
+      notifyAuthenticationFailure(generation)
+      throw error
+    })
+    .finally(() => {
+      // 旧代请求可以晚于新代请求结束，只有同一个 Promise 才能清理共享槽位。
+      if (refreshOperation?.promise === promise) {
+        refreshOperation = null
+      }
+    })
+  refreshOperation = { generation, promise }
+  return promise
 }
 
 export async function getCurrentUser(): Promise<AuthUser> {
@@ -69,51 +103,73 @@ export async function getCurrentUser(): Promise<AuthUser> {
 }
 
 export async function logout(): Promise<void> {
+  const generation = authenticationGeneration
   try {
     const response = await fetch("/api/v1/auth/logout", {
       method: "POST",
       credentials: "same-origin",
     })
+    assertCurrentGeneration(generation)
     if (!response.ok) {
-      throw await responseError(response)
+      const error = await responseError(response)
+      assertCurrentGeneration(generation)
+      throw error
     }
+  } catch (error) {
+    if (!isCurrentGeneration(generation)) {
+      throw new StaleAuthenticationOperationError()
+    }
+    throw error
   } finally {
-    setAccessToken(null)
+    if (isCurrentGeneration(generation)) {
+      setAccessToken(null)
+    }
   }
 }
 
 export async function apiFetch(
   input: RequestInfo | URL,
-  init: RequestInit = {},
+  init: RequestInit = {}
 ): Promise<Response> {
-  return authenticatedFetch(input, init, true)
+  return authenticatedFetch(input, init, true, authenticationGeneration)
 }
 
 async function authenticatedFetch(
   input: RequestInfo | URL,
   init: RequestInit,
   allowRefresh: boolean,
+  generation: number
 ): Promise<Response> {
+  assertCurrentGeneration(generation)
   const headers = new Headers(init.headers)
   if (accessToken !== null) {
     headers.set("Authorization", `Bearer ${accessToken}`)
   }
-  const response = await fetch(input, {
-    ...init,
-    headers,
-    credentials: "same-origin",
-  })
+  let response: Response
+  try {
+    response = await fetch(input, {
+      ...init,
+      headers,
+      credentials: "same-origin",
+    })
+  } catch (error) {
+    assertCurrentGeneration(generation)
+    throw error
+  }
+  assertCurrentGeneration(generation)
 
   if (
     response.status === 401 &&
     (await errorCode(response)) === "authentication_required"
   ) {
+    assertCurrentGeneration(generation)
     if (!allowRefresh) {
-      notifyAuthenticationFailure()
+      notifyAuthenticationFailure(generation)
       return response
     }
     await refreshAccessToken()
-    return authenticatedFetch(input, init, false)
+    assertCurrentGeneration(generation)
+    return authenticatedFetch(input, init, false, generation)
   }
   return response
 }
@@ -129,7 +185,22 @@ async function requestJson<T>(url: string, init: RequestInit): Promise<T> {
   return (await response.json()) as T
 }
 
-function notifyAuthenticationFailure() {
+function notifyAuthenticationFailure(expectedGeneration: number) {
+  if (!isCurrentGeneration(expectedGeneration)) {
+    return
+  }
+  // 当前代认证失败会使所有同代并发操作失效，防止较晚成功的请求重新写入凭据。
+  authenticationGeneration += 1
   setAccessToken(null)
   authenticationFailureHandler?.()
+}
+
+function isCurrentGeneration(generation: number): boolean {
+  return generation === authenticationGeneration
+}
+
+function assertCurrentGeneration(generation: number): void {
+  if (!isCurrentGeneration(generation)) {
+    throw new StaleAuthenticationOperationError()
+  }
 }

@@ -7,7 +7,7 @@ from sqlalchemy.exc import IntegrityError
 
 from app.db.base import Base
 from app.db.session import create_engine_for_settings, create_session_factory
-from app.models import AuthSession, Task, User
+from app.models import AuthSession, McpToken, Task, User
 
 
 def make_session_factory(tmp_path: Path):
@@ -45,7 +45,7 @@ def test_models_expose_required_tables_and_task_indexes(tmp_path: Path) -> None:
         for foreign_key in inspector.get_foreign_keys("tasks")
     }
 
-    assert table_names == {"users", "auth_sessions", "tasks"}
+    assert table_names == {"users", "auth_sessions", "tasks", "mcp_tokens"}
     assert user_columns["next_task_serial"]["nullable"] is False
     assert (
         str(user_columns["next_task_serial"]["default"]).strip("'\"()") == "1"
@@ -88,6 +88,117 @@ def test_models_expose_required_tables_and_task_indexes(tmp_path: Path) -> None:
     assert parent_foreign_key["referred_table"] == "tasks"
     assert parent_foreign_key["referred_columns"] == ["id"]
     assert parent_foreign_key["options"]["ondelete"] == "SET NULL"
+    engine.dispose()
+
+
+def test_mcp_token_model_contract_and_user_delete_cascade(tmp_path: Path) -> None:
+    engine, session_factory = make_session_factory(tmp_path)
+    inspector = inspect(engine)
+    user_columns = {
+        column["name"]: column for column in inspector.get_columns("users")
+    }
+    token_columns = {
+        column["name"]: column
+        for column in inspector.get_columns("mcp_tokens")
+    }
+    token_checks = {
+        constraint["name"]: " ".join(constraint["sqltext"].split())
+        for constraint in inspector.get_check_constraints("mcp_tokens")
+    }
+    token_uniques = {
+        constraint["name"]: constraint["column_names"]
+        for constraint in inspector.get_unique_constraints("mcp_tokens")
+    }
+    token_indexes = {
+        index["name"]: index["column_names"]
+        for index in inspector.get_indexes("mcp_tokens")
+    }
+    token_foreign_keys = {
+        tuple(foreign_key["constrained_columns"]): foreign_key
+        for foreign_key in inspector.get_foreign_keys("mcp_tokens")
+    }
+
+    assert user_columns["auth_version"]["nullable"] is False
+    assert str(user_columns["auth_version"]["default"]).strip("'\"()") == "1"
+    assert set(token_columns) == {
+        "id",
+        "user_id",
+        "name",
+        "token_hash",
+        "expires_at",
+        "revoked_at",
+        "last_used_at",
+        "created_at",
+    }
+    for column_name in ("id", "user_id", "name", "token_hash", "created_at"):
+        assert token_columns[column_name]["nullable"] is False
+    for column_name in ("expires_at", "revoked_at", "last_used_at"):
+        assert token_columns[column_name]["nullable"] is True
+    assert token_checks == {
+        "ck_mcp_tokens_name_length": (
+            "instr(name, char(0)) = 0 AND length(name) BETWEEN 1 AND 64"
+        ),
+        "ck_mcp_tokens_hash_format": (
+            "instr(token_hash, char(0)) = 0 AND length(token_hash) = 64 "
+            "AND token_hash = lower(token_hash) AND token_hash NOT GLOB '*[^0-9a-f]*'"
+        ),
+    }
+    assert token_uniques == {"uq_mcp_tokens_token_hash": ["token_hash"]}
+    assert token_indexes == {"ix_mcp_tokens_user_id": ["user_id"]}
+    user_foreign_key = token_foreign_keys[("user_id",)]
+    assert user_foreign_key["referred_table"] == "users"
+    assert user_foreign_key["referred_columns"] == ["id"]
+    assert user_foreign_key["options"]["ondelete"] == "CASCADE"
+
+    with session_factory() as session:
+        user = User(username="person", password_hash="hash")
+        user.mcp_tokens.append(McpToken(name="开发环境", token_hash="a" * 64))
+        session.add(user)
+        session.commit()
+        user_id = user.id
+
+    with engine.begin() as connection:
+        # 使用原生 SQL 触发数据库外键，避免 ORM delete-orphan 掩盖约束缺失。
+        connection.exec_driver_sql("DELETE FROM users WHERE id = ?", (user_id,))
+
+    with session_factory() as session:
+        assert session.query(McpToken).filter_by(user_id=user_id).count() == 0
+
+    engine.dispose()
+
+
+@pytest.mark.parametrize(
+    ("name", "token_hash"),
+    [
+        ("\0开头", "a" * 64),
+        ("中间\0字符", "b" * 64),
+        ("名" * 64 + "\0", "c" * 64),
+        ("有效名称", "\0" + "d" * 64),
+        ("有效名称", "e" * 32 + "\0" + "e" * 32),
+        ("有效名称", "f" * 64 + "\0"),
+    ],
+    ids=[
+        "名称开头不允许空字符",
+        "名称中间不允许空字符",
+        "名称第六十四字符后不允许空字符",
+        "摘要开头不允许空字符",
+        "摘要中间不允许空字符",
+        "摘要第六十四字符后不允许空字符",
+    ],
+)
+def test_mcp_token_constraints_reject_embedded_nul(
+    tmp_path: Path,
+    name: str,
+    token_hash: str,
+) -> None:
+    engine, session_factory = make_session_factory(tmp_path)
+    with session_factory() as session:
+        user = User(username="person", password_hash="hash")
+        user.mcp_tokens.append(McpToken(name=name, token_hash=token_hash))
+        session.add(user)
+        with pytest.raises(IntegrityError):
+            session.commit()
+
     engine.dispose()
 
 

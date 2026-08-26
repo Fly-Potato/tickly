@@ -143,7 +143,7 @@ def request_security_context(
 ) -> tuple[str, str]:
     """从入口已验证并规范化的请求头取得明文凭据与 request ID。
 
-    该函数不是独立认证器：Bearer 哈希校验由外层中间件完成。这里仍对缺失、
+    该函数不是独立认证器：Bearer 已由外层中间件交给 API 权威验证。这里仍对缺失、
     非 HTTP 上下文和异常 request ID 失败关闭，且错误对象不保留原始 header。
     """
     headers = context.headers

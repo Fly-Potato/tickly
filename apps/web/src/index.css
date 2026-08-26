@@ -231,15 +231,19 @@
     @apply flex flex-col gap-5 border-b border-border/70 px-5 py-5 sm:flex-row sm:items-center sm:justify-between sm:px-8;
   }
 
+  .todo-brand-button {
+    @apply min-h-11 w-fit min-w-11 rounded-xl text-left outline-none focus-visible:ring-3 focus-visible:ring-ring/40;
+  }
+
   .todo-brand-note {
     @apply mt-0.5 font-mono text-[0.62rem] tracking-[0.12em] text-muted-foreground uppercase;
   }
 
-  .todo-account {
-    @apply flex items-center justify-between gap-4 sm:justify-end;
+  .todo-header-actions {
+    @apply flex min-w-0 flex-wrap items-center justify-between gap-4 sm:justify-end;
   }
 
-  .todo-account > div {
+  .todo-account {
     @apply grid min-w-0 text-right text-sm;
   }
 
@@ -252,8 +256,255 @@
     @apply font-mono text-[0.68rem] text-muted-foreground;
   }
 
-  .todo-account button {
+  .todo-header-buttons {
+    @apply flex shrink-0 items-center gap-2;
+  }
+
+  .todo-header-buttons button {
     @apply min-h-11;
+  }
+
+  .settings-page {
+    @apply mx-auto min-h-[calc(100svh-8rem)] max-w-5xl px-5 py-8 sm:px-8 sm:py-10;
+  }
+
+  .settings-page-heading {
+    @apply grid min-w-0 gap-6 border-b border-border/70 pb-7 sm:grid-cols-[minmax(0,1fr)_minmax(15rem,auto)] sm:items-end;
+  }
+
+  .settings-page-heading h1 {
+    @apply mt-1 text-2xl font-semibold tracking-[-0.025em];
+  }
+
+  .settings-page-heading > div > p:last-child {
+    @apply mt-2 max-w-xl text-sm leading-6 text-muted-foreground;
+  }
+
+  .settings-eyebrow {
+    @apply font-mono text-[0.68rem] font-medium tracking-[0.14em] text-blue-600 uppercase;
+  }
+
+  .settings-account-summary {
+    @apply grid min-w-0 grid-cols-2 gap-x-6 gap-y-2 sm:justify-self-end;
+  }
+
+  .settings-account-summary div {
+    @apply min-w-0;
+  }
+
+  .settings-account-summary dt {
+    @apply font-mono text-[0.64rem] tracking-[0.08em] text-muted-foreground uppercase;
+  }
+
+  .settings-account-summary dd {
+    @apply mt-1 max-w-56 text-sm font-medium break-words;
+  }
+
+  .settings-tools {
+    @apply mt-7 grid gap-6;
+  }
+
+  .settings-tool-card {
+    @apply min-w-0 rounded-2xl border border-border/80 bg-background/72 p-5 sm:p-6;
+  }
+
+  .settings-card-heading {
+    @apply flex min-w-0 items-start gap-3;
+  }
+
+  .settings-card-icon {
+    @apply grid size-10 shrink-0 place-items-center rounded-xl border border-blue-200 bg-blue-50 text-blue-700;
+  }
+
+  .settings-card-icon svg {
+    @apply size-5;
+  }
+
+  .settings-card-heading h2 {
+    @apply text-lg font-semibold tracking-[-0.015em];
+  }
+
+  .settings-card-heading p {
+    @apply mt-1 max-w-2xl text-sm leading-6 text-muted-foreground;
+  }
+
+  .settings-password-form {
+    @apply mt-6 grid gap-4 lg:grid-cols-3;
+  }
+
+  .settings-field {
+    @apply grid min-w-0 gap-2;
+  }
+
+  .settings-field label {
+    @apply text-sm font-medium;
+  }
+
+  .settings-field input,
+  .settings-field select {
+    @apply min-h-11 min-w-0 rounded-xl border border-input bg-background px-3 text-sm shadow-sm transition-colors outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/20 disabled:cursor-not-allowed disabled:opacity-60;
+  }
+
+  .settings-inline-error {
+    @apply rounded-xl border border-destructive/20 bg-destructive/8 px-4 py-3 text-sm leading-5 text-destructive;
+  }
+
+  .settings-password-form > .settings-inline-error,
+  .settings-card-actions {
+    @apply lg:col-span-3;
+  }
+
+  .settings-card-actions {
+    @apply flex justify-end pt-1;
+  }
+
+  .settings-card-actions button,
+  .settings-token-create button,
+  .settings-list-error button,
+  .settings-dialog-actions button,
+  .settings-revoke-button {
+    @apply min-h-11 min-w-11;
+  }
+
+  .settings-token-create {
+    @apply mt-6 grid min-w-0 gap-4 sm:grid-cols-[minmax(0,1fr)_12rem] lg:grid-cols-[minmax(0,1fr)_12rem_auto] lg:items-end;
+  }
+
+  .settings-create-token-button {
+    @apply sm:col-span-2 lg:col-span-1;
+  }
+
+  .settings-token-create + .settings-inline-error {
+    @apply mt-4;
+  }
+
+  .settings-token-list {
+    @apply mt-6 min-w-0 border-t border-border/70 pt-5;
+  }
+
+  .settings-list-state {
+    @apply grid min-h-24 animate-pulse place-content-center text-center text-sm text-muted-foreground;
+  }
+
+  .settings-list-error {
+    @apply flex min-h-24 flex-col items-start justify-center gap-3 rounded-xl border border-destructive/20 bg-destructive/5 px-4 py-3 sm:flex-row sm:items-center sm:justify-between;
+  }
+
+  .settings-list-error p {
+    @apply text-sm leading-5 text-destructive;
+  }
+
+  .settings-token-empty {
+    @apply grid min-h-32 place-items-center content-center gap-1 text-center;
+  }
+
+  .settings-token-empty > svg {
+    @apply mb-1 size-6 text-muted-foreground;
+  }
+
+  .settings-token-empty p {
+    @apply text-sm font-medium;
+  }
+
+  .settings-token-empty span {
+    @apply text-xs text-muted-foreground;
+  }
+
+  .settings-token-rows {
+    @apply grid min-w-0 gap-px overflow-hidden rounded-xl border border-border bg-border;
+  }
+
+  .settings-token-row {
+    @apply grid min-w-0 gap-4 bg-background px-4 py-4 outline-none focus-visible:ring-3 focus-visible:ring-blue-500/25 md:grid-cols-[minmax(9rem,1.25fr)_auto_minmax(15rem,1fr)_auto] md:items-center;
+  }
+
+  .settings-token-identity {
+    @apply grid min-w-0 gap-1;
+  }
+
+  .settings-token-identity strong {
+    @apply text-sm leading-5 break-words;
+  }
+
+  .settings-token-created {
+    @apply font-mono text-[0.66rem] leading-4 text-muted-foreground;
+  }
+
+  .settings-token-id {
+    @apply font-mono text-[0.66rem] leading-4 text-muted-foreground;
+  }
+
+  .settings-token-status {
+    @apply w-fit rounded-full border px-2.5 py-1 text-xs font-medium;
+  }
+
+  .settings-token-status[data-status="active"] {
+    @apply border-emerald-200 bg-emerald-50 text-emerald-800;
+  }
+
+  .settings-token-status[data-status="expired"] {
+    @apply border-amber-200 bg-amber-50 text-amber-800;
+  }
+
+  .settings-token-status[data-status="revoked"] {
+    @apply border-slate-300 bg-slate-100 text-slate-700;
+  }
+
+  .settings-token-dates {
+    @apply grid min-w-0 grid-cols-2 gap-4;
+  }
+
+  .settings-token-dates div {
+    @apply min-w-0;
+  }
+
+  .settings-token-dates dt {
+    @apply font-mono text-[0.62rem] tracking-[0.06em] text-muted-foreground uppercase;
+  }
+
+  .settings-token-dates dd {
+    @apply mt-1 text-xs leading-4 break-words;
+  }
+
+  .settings-revoke-button {
+    @apply justify-self-start sm:justify-self-end;
+  }
+
+  .settings-dialog-popup {
+    @apply max-h-[calc(100svh-2.5rem)] overflow-y-auto;
+  }
+
+  .settings-revoke-description {
+    overflow-wrap: anywhere;
+    word-break: break-word;
+  }
+
+  .settings-issued-token {
+    @apply mt-5 block min-w-0 rounded-xl border border-blue-200 bg-blue-50 p-4 font-mono text-xs leading-5 text-blue-950 select-all;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+  }
+
+  .settings-token-guide {
+    @apply mt-5 grid min-w-0 gap-2 rounded-xl bg-muted/65 p-4 text-xs leading-5 text-muted-foreground;
+  }
+
+  .settings-token-guide p,
+  .settings-token-guide code {
+    @apply min-w-0 break-words;
+    overflow-wrap: anywhere;
+  }
+
+  .settings-copy-status {
+    @apply mt-4 text-sm font-medium text-emerald-700;
+  }
+
+  .settings-dialog-popup > .settings-inline-error {
+    @apply mt-4;
+  }
+
+  .settings-dialog-actions {
+    @apply mt-6 flex flex-col-reverse gap-3 sm:flex-row sm:justify-end;
   }
 
   .todo-workspace-layout {
@@ -416,7 +667,7 @@
 
   .task-row[data-status="cancelled"] .task-row-title,
   .task-row-title--cancelled {
-    @apply text-muted-foreground line-through decoration-dashed decoration-slate-400;
+    @apply text-muted-foreground line-through decoration-slate-400 decoration-dashed;
   }
 
   .task-row-topic,
@@ -487,7 +738,9 @@
 
   .task-editor-popup,
   .task-delete-backdrop,
-  .task-dialog-backdrop {
+  .task-dialog-backdrop,
+  .settings-dialog-backdrop,
+  .settings-dialog-popup {
     transition:
       opacity 160ms ease,
       transform 180ms ease;
@@ -598,13 +851,16 @@
   .task-editor-popup,
   .task-delete-backdrop,
   .task-dialog-backdrop,
+  .settings-dialog-backdrop,
+  .settings-dialog-popup,
   .task-row,
   .task-filter-options button {
     transition: none;
   }
 
   .todo-page button,
-  .task-dialog-popup button {
+  .task-dialog-popup button,
+  .settings-dialog-popup button {
     transition: none;
     transform: none;
   }

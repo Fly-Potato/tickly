@@ -1,4 +1,4 @@
-import { LogOut, Plus, X } from "lucide-react"
+import { Plus, X } from "lucide-react"
 import { useEffect, useState } from "react"
 
 import { Button } from "@/components/ui/button"
@@ -18,16 +18,8 @@ import { TaskList } from "./task-list"
 import { findTaskInGroups, useTaskWorkspace } from "./use-task-workspace"
 
 type TodoWorkspaceProps = {
-  username: string
   timeZone: string
-  loggingOut: boolean
-  onLogout(): Promise<void>
 }
-
-type WorkspaceHeaderProps = Pick<
-  TodoWorkspaceProps,
-  "username" | "timeZone" | "loggingOut" | "onLogout"
->
 
 const statusLabels: Record<TaskStatusFilter, string> = {
   all: "All",
@@ -35,40 +27,6 @@ const statusLabels: Record<TaskStatusFilter, string> = {
   in_progress: "In Progress",
   completed: "Completed",
   cancelled: "Cancelled",
-}
-
-function WorkspaceHeader({
-  username,
-  timeZone,
-  loggingOut,
-  onLogout,
-}: WorkspaceHeaderProps) {
-  return (
-    <header className="todo-header">
-      <div className="auth-brand-row">
-        <span className="auth-brand-mark">T</span>
-        <div>
-          <span className="auth-brand-name">Tickly</span>
-          <p className="todo-brand-note">Personal cadence</p>
-        </div>
-      </div>
-      <div className="todo-account">
-        <div>
-          <strong>{username}</strong>
-          <span>{timeZone}</span>
-        </div>
-        <Button
-          type="button"
-          variant="outline"
-          disabled={loggingOut}
-          onClick={() => void onLogout()}
-        >
-          <LogOut aria-hidden="true" />
-          {loggingOut ? "正在退出" : "退出登录"}
-        </Button>
-      </div>
-    </header>
-  )
 }
 
 type ActiveFilterSummaryProps = {
@@ -121,12 +79,7 @@ function ActiveFilterSummary({
 }
 
 /** 组合 Todo 单页工作区；只协调局部组件，不把任务状态提升到认证 Context。 */
-export function TodoWorkspace({
-  username,
-  timeZone,
-  loggingOut,
-  onLogout,
-}: TodoWorkspaceProps) {
+export function TodoWorkspace({ timeZone }: TodoWorkspaceProps) {
   const { state, actions } = useTaskWorkspace()
   useEffect(() => {
     const params = new URLSearchParams()
@@ -216,79 +169,70 @@ export function TodoWorkspace({
   }
 
   return (
-    <main className="todo-page">
-      <section className="todo-shell" aria-labelledby="workspace-title">
-        <WorkspaceHeader
-          username={username}
-          timeZone={timeZone}
-          loggingOut={loggingOut}
-          onLogout={onLogout}
+    <>
+      <div className="todo-workspace-layout">
+        <TaskFilterSidebar
+          query={state.query}
+          topics={state.topics}
+          disabled={state.initialLoading}
+          topicLoading={state.topicLoading}
+          topicError={state.topicError}
+          onStatusChange={actions.setStatus}
+          onQueryChange={actions.setQuery}
+          onTopicChange={actions.setTopic}
+          onSortChange={actions.setSort}
+          onOrderChange={actions.setOrder}
+          onRetryTopics={actions.retryTopics}
+          onReset={() => actions.applyQuery({ ...DEFAULT_TASK_QUERY })}
         />
-
-        <div className="todo-workspace-layout">
-          <TaskFilterSidebar
-            query={state.query}
-            topics={state.topics}
-            disabled={state.initialLoading}
-            topicLoading={state.topicLoading}
-            topicError={state.topicError}
-            onStatusChange={actions.setStatus}
-            onQueryChange={actions.setQuery}
-            onTopicChange={actions.setTopic}
-            onSortChange={actions.setSort}
-            onOrderChange={actions.setOrder}
-            onRetryTopics={actions.retryTopics}
-            onReset={() => actions.applyQuery({ ...DEFAULT_TASK_QUERY })}
-          />
-          <section className="task-list-content" aria-label="Todo List">
-            <div className="task-list-toolbar">
-              <h1 id="workspace-title" className="auth-card-index">
-                Todo list
-              </h1>
-              <div className="task-list-toolbar-actions">
-                <MobileTaskFilterDialog
-                  query={state.query}
-                  topics={state.topics}
-                  disabled={state.initialLoading}
-                  topicLoading={state.topicLoading}
-                  topicError={state.topicError}
-                  onRetryTopics={actions.retryTopics}
-                  onApply={actions.applyQuery}
-                />
-                <Button
-                  type="button"
-                  disabled={state.creating}
-                  onClick={() => setCreateOpen(true)}
-                >
-                  <Plus aria-hidden="true" />
-                  新建待办
-                </Button>
-              </div>
+        <section className="task-list-content" aria-label="Todo List">
+          <div className="task-list-toolbar">
+            <h1 id="workspace-title" className="auth-card-index">
+              Todo list
+            </h1>
+            <div className="task-list-toolbar-actions">
+              <MobileTaskFilterDialog
+                query={state.query}
+                topics={state.topics}
+                disabled={state.initialLoading}
+                topicLoading={state.topicLoading}
+                topicError={state.topicError}
+                onRetryTopics={actions.retryTopics}
+                onApply={actions.applyQuery}
+              />
+              <Button
+                type="button"
+                disabled={state.creating}
+                onClick={() => setCreateOpen(true)}
+              >
+                <Plus aria-hidden="true" />
+                新建待办
+              </Button>
             </div>
+          </div>
 
-            <ActiveFilterSummary
-              status={state.query.status}
-              topic={state.query.topic}
-              onClearTopic={() => actions.setTopic(undefined)}
-            />
-            <TaskList
-              groups={state.items}
-              status={state.query.status}
-              timeZone={timeZone}
-              initialLoading={state.initialLoading}
-              loadingMore={state.loadingMore}
-              nextCursor={state.nextCursor}
-              error={state.error}
-              statusError={state.statusError}
-              statusMutatingTaskIds={state.statusMutatingTaskIds}
-              onRetry={actions.retry}
-              onLoadMore={actions.loadMore}
-              onSelect={selectTask}
-              onStatusChange={actions.changeStatus}
-            />
-          </section>
-        </div>
-      </section>
+          <ActiveFilterSummary
+            status={state.query.status}
+            topic={state.query.topic}
+            onClearTopic={() => actions.setTopic(undefined)}
+          />
+          <TaskList
+            groups={state.items}
+            status={state.query.status}
+            timeZone={timeZone}
+            initialLoading={state.initialLoading}
+            loadingMore={state.loadingMore}
+            nextCursor={state.nextCursor}
+            error={state.error}
+            statusError={state.statusError}
+            statusMutatingTaskIds={state.statusMutatingTaskIds}
+            onRetry={actions.retry}
+            onLoadMore={actions.loadMore}
+            onSelect={selectTask}
+            onStatusChange={actions.changeStatus}
+          />
+        </section>
+      </div>
 
       {createOpen ? (
         <TaskCreatePanel
@@ -319,6 +263,6 @@ export function TodoWorkspace({
           onClose={closeEditor}
         />
       ) : null}
-    </main>
+    </>
   )
 }

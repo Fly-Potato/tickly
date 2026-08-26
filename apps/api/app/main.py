@@ -8,6 +8,7 @@ from sqlalchemy import Engine
 
 from app.api.router import api_router
 from app.api.routes.health import router as health_router
+from app.api.routes.mcp_auth import router as mcp_auth_router
 from app.api.routes.mcp_tasks import router as mcp_tasks_router
 from app.core.config import API_ROOT, Settings
 from app.core.errors import register_exception_handlers
@@ -67,6 +68,7 @@ def create_app(
         prefix=resolved_settings.api_v1_prefix,
     )
     # 内部服务间契约独立挂载，不继承公开 API 前缀，也不进入公开 OpenAPI。
+    application.include_router(mcp_auth_router)
     application.include_router(mcp_tasks_router)
     return application
 
