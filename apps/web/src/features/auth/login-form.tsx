@@ -30,7 +30,9 @@ export function LoginForm() {
     }
   }
 
-  const error = localError ?? (state.status === "anonymous" ? state.error : null)
+  const error =
+    localError ?? (state.status === "anonymous" ? state.error : null)
+  const notice = state.status === "anonymous" ? state.notice : undefined
 
   return (
     <main className="auth-page">
@@ -93,6 +95,15 @@ export function LoginForm() {
                 disabled={submitting}
               />
             </div>
+
+            {notice && !error && !submitting ? (
+              <p
+                role="status"
+                className="rounded-xl border border-primary/20 bg-primary/8 px-4 py-3 text-sm text-foreground"
+              >
+                {notice}
+              </p>
+            ) : null}
 
             {error ? (
               <p

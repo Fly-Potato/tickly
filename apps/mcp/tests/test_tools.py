@@ -1,7 +1,7 @@
 """Tickly MCP 工具的协议、转发与安全边界测试。"""
 
 from datetime import UTC, datetime
-import hashlib
+import asyncio
 from importlib import import_module
 from types import SimpleNamespace
 from typing import Any
@@ -63,7 +63,15 @@ class FakeApiClient:
 
     def __init__(self) -> None:
         self.calls: list[tuple[str, dict[str, object]]] = []
+        self.verification_calls: list[tuple[str, str]] = []
         self.error: McpToolError | None = None
+
+    async def verify_token(self, *, token: str, request_id: str) -> None:
+        """记录 transport 逐请求认证，且不把凭据写入共享当前用户状态。"""
+        await asyncio.sleep(0)
+        self.verification_calls.append((token, request_id))
+        if self.error is not None:
+            raise self.error
 
     def _record(self, name: str, values: dict[str, object]) -> None:
         self.calls.append((name, values))
@@ -134,7 +142,6 @@ class FakeApiClient:
 def make_server(fake_api_client: FakeApiClient):
     settings = Settings(
         environment=Environment.TEST,
-        token_sha256="a" * 64,
         _env_file=None,
     )
     return create_mcp_server(
@@ -988,10 +995,8 @@ async def test_read_tool_propagates_stable_error_without_raw_token() -> None:
 async def test_streamable_http_forwards_configured_request_id_header() -> None:
     """真实 HTTP 协议调用必须沿用入口配置的 request ID header。"""
     fake = FakeApiClient()
-    token_digest = hashlib.sha256(TOKEN.encode("utf-8")).hexdigest()
     settings = Settings(
         environment=Environment.TEST,
-        token_sha256=token_digest,
         request_id_header="X-Correlation-ID",
         allowed_hosts=["testserver"],
         allowed_origins=["https://codex.example"],
@@ -1032,16 +1037,68 @@ async def test_streamable_http_forwards_configured_request_id_header() -> None:
             {"token": TOKEN, "request_id": "correlation-request-1"},
         )
     ]
+    assert fake.verification_calls
+    assert all(
+        token == TOKEN and request_id == "correlation-request-1"
+        for token, request_id in fake.verification_calls
+    )
+
+
+@pytest.mark.asyncio
+async def test_concurrent_streamable_requests_keep_transport_and_tool_context_separate() -> None:
+    """并发用户的 transport 验证与工具透传必须保持同一 Token/请求 ID 配对。"""
+    fake = FakeApiClient()
+    settings = Settings(
+        environment=Environment.TEST,
+        allowed_hosts=["testserver"],
+        allowed_origins=["https://codex.example"],
+        api_base_url="http://api:8321",
+        _env_file=None,
+    )
+    application = create_http_app(settings, api_client_override=fake)  # type: ignore[arg-type]
+    protocol_app = application.app.app  # type: ignore[attr-defined]
+
+    async def call_topics(token: str, request_id: str) -> None:
+        transport = httpx2.ASGITransport(app=application)
+        async with httpx2.AsyncClient(
+            transport=transport,
+            base_url="http://testserver",
+            headers={
+                "Authorization": f"Bearer {token}",
+                "X-Request-ID": request_id,
+            },
+        ) as http:
+            client_transport = streamable_http_client(
+                "http://testserver/mcp",
+                http_client=http,
+                terminate_on_close=False,
+            )
+            async with Client(client_transport) as client:
+                result = await client.call_tool("list_topics", {})
+                assert result.is_error is False
+
+    expected = {
+        ("tickly_mcp_first.secret", "request-first"),
+        ("tickly_mcp_second.secret", "request-second"),
+    }
+    async with protocol_app.router.lifespan_context(protocol_app):
+        await asyncio.gather(*(call_topics(*pair) for pair in expected))
+
+    forwarded = {
+        (str(values["token"]), str(values["request_id"]))
+        for name, values in fake.calls
+        if name == "list_topics"
+    }
+    assert forwarded == expected
+    assert set(fake.verification_calls) == expected
 
 
 @pytest.mark.asyncio
 async def test_streamable_http_hides_sensitive_local_validation_details() -> None:
     """真实 Streamable HTTP tools/call 也只能返回固定的本地校验错误。"""
     fake = FakeApiClient()
-    token_digest = hashlib.sha256(TOKEN.encode("utf-8")).hexdigest()
     settings = Settings(
         environment=Environment.TEST,
-        token_sha256=token_digest,
         allowed_hosts=["testserver"],
         allowed_origins=["https://codex.example"],
         api_base_url="http://api:8321",
@@ -1089,10 +1146,8 @@ async def test_streamable_http_hides_sensitive_local_validation_details() -> Non
 async def test_streamable_http_rejects_non_rfc3339_datetime_inputs() -> None:
     """真实协议不能把 number 或纯数字字符串日期转成 Unix timestamp。"""
     fake = FakeApiClient()
-    token_digest = hashlib.sha256(TOKEN.encode("utf-8")).hexdigest()
     settings = Settings(
         environment=Environment.TEST,
-        token_sha256=token_digest,
         allowed_hosts=["testserver"],
         allowed_origins=["https://codex.example"],
         api_base_url="http://api:8321",

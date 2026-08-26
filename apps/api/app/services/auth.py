@@ -90,7 +90,7 @@ def login_user(
             user_agent=user_agent[:512] if user_agent else None,
         )
         session.add(auth_session)
-        access_token = issue_access_token(user.id, settings)
+        access_token = issue_access_token(user.id, user.auth_version, settings)
         session.commit()
         return AuthenticationResult(
             access_token=access_token,
@@ -157,7 +157,9 @@ def refresh_session(
             session.commit()
             raise RefreshReplayed
 
-        access_token = issue_access_token(auth_session.user_id, settings)
+        access_token = issue_access_token(
+            auth_session.user_id, user.auth_version, settings
+        )
         session.commit()
         return AuthenticationResult(
             access_token=access_token,
@@ -202,7 +204,7 @@ def logout_session(
 def authenticate_access_token(
     session: Session, access_token: str, settings: Settings
 ) -> User:
-    """解码 access token 并重新读取账号状态，使停用立即生效。"""
+    """解码 access token 并核对账号活动状态与当前认证版本。"""
 
     try:
         payload = decode_token(access_token, "access", settings)
@@ -210,6 +212,11 @@ def authenticate_access_token(
         raise AuthenticationRequired from error
 
     user = session.get(User, payload.sub)
-    if user is None or not user.is_active:
+    if (
+        user is None
+        or not user.is_active
+        or payload.ver != user.auth_version
+    ):
+        # 密码变更会递增版本；旧 token 即使签名和时效仍有效，也不能继续认证。
         raise AuthenticationRequired
     return user

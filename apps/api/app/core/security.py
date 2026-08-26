@@ -14,7 +14,7 @@ from uuid import uuid4
 
 import jwt
 from jwt.exceptions import InvalidTokenError as PyJWTInvalidTokenError
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel, Field, ValidationError
 from pwdlib import PasswordHash
 
 from app.core.config import Settings
@@ -43,10 +43,13 @@ class TokenPayload(BaseModel):
     iat: datetime
     exp: datetime
     sid: str | None = None
+    ver: int | None = Field(default=None, strict=True, ge=1)
 
 
 _USERNAME_PATTERN = re.compile(r"[a-z0-9_-]{3,32}")
 _MIN_PASSWORD_LENGTH = 6
+# 这是进入 Argon2 前的请求资源保护上限，不属于密码强度策略。
+MAX_PASSWORD_INPUT_LENGTH = 1024
 _PASSWORD_HASH = PasswordHash.recommended()
 # 未知用户仍执行一次同等成本的 Argon2 校验，缩小账号枚举的时间差异。
 _DUMMY_PASSWORD_HASH = _PASSWORD_HASH.hash("tickly-dummy-password-value")
@@ -90,8 +93,10 @@ def verify_dummy_password(value: str) -> None:
     _PASSWORD_HASH.verify(value, _DUMMY_PASSWORD_HASH)
 
 
-def issue_access_token(user_id: str, settings: Settings) -> str:
-    """签发短期 access token；会话状态不写入该 token。"""
+def issue_access_token(
+    user_id: str, auth_version: int, settings: Settings
+) -> str:
+    """签发携带认证版本的短期 access token。"""
 
     now = datetime.now(UTC)
     return _encode_token(
@@ -103,6 +108,7 @@ def issue_access_token(user_id: str, settings: Settings) -> str:
             "aud": settings.jwt_audience,
             "iat": now,
             "exp": now + timedelta(minutes=settings.access_token_minutes),
+            "ver": auth_version,
         },
         settings,
     )
@@ -159,6 +165,9 @@ def decode_token(
 
     if payload.type != expected_type:
         raise InvalidToken("JWT 用途不匹配")
+    if expected_type == "access" and payload.ver is None:
+        # 旧 access token 缺少版本，无法证明仍匹配当前账号凭据，必须失败关闭。
+        raise InvalidToken("access token 缺少认证版本")
     if expected_type == "refresh" and not payload.sid:
         raise InvalidToken("refresh token 缺少会话标识")
     return payload

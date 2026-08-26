@@ -25,6 +25,25 @@ _HOSTNAME_PATTERN = re.compile(
     r"(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)"
     r"(?:\.(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?))*\.?"
 )
+_HEADER_NAME_PATTERN = re.compile(r"^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$")
+_RESERVED_REQUEST_ID_HEADERS = frozenset(
+    {
+        "accept",
+        "authorization",
+        "connection",
+        "content-length",
+        "content-type",
+        "host",
+        "mcp-protocol-version",
+        "mcp-session-id",
+        "origin",
+        "te",
+        "trailer",
+        "transfer-encoding",
+        "upgrade",
+        "www-authenticate",
+    }
+)
 
 
 def _is_valid_transport_hostname(value: str) -> bool:
@@ -138,7 +157,6 @@ class Settings(BaseSettings):
     api_base_url: Annotated[
         AnyHttpUrl, UrlConstraints(preserve_empty_path=True)
     ] = Field(default="http://127.0.0.1:8321", validate_default=True)
-    token_sha256: str | None = None
     allowed_hosts: list[str] = ["127.0.0.1:*", "localhost:*"]
     allowed_origins: list[str] = ["http://127.0.0.1:*", "http://localhost:*"]
     connect_timeout_seconds: PositiveSeconds = 3
@@ -164,26 +182,20 @@ class Settings(BaseSettings):
             _validate_origin_allowlist_entry(value)
         return values
 
-    @field_validator("token_sha256")
+    @field_validator("request_id_header")
     @classmethod
-    def validate_token_hash(cls, value: str | None) -> str | None:
-        """只接受固定长度的小写摘要，避免不同 token 表示绕过比较边界。"""
-        if value is None:
-            return None
-        if (
-            len(value) != 64
-            or value != value.lower()
-            or any(character not in "0123456789abcdef" for character in value)
-        ):
-            raise ValueError("token_sha256 must be a lowercase SHA-256 hex digest")
+    def validate_request_id_header(cls, value: str) -> str:
+        """关联头必须是 RFC token，且不得覆盖认证、分帧或 transport 语义。"""
+        if _HEADER_NAME_PATTERN.fullmatch(value) is None:
+            raise ValueError("request_id_header 必须是合法 HTTP header name")
+        if value.casefold() in _RESERVED_REQUEST_ID_HEADERS:
+            raise ValueError("request_id_header 不得使用安全或 transport 保留头")
         return value
 
     @model_validator(mode="after")
     def validate_production_security(self) -> "Settings":
-        """生产环境必须显式配置鉴权摘要和传输白名单，缺失时拒绝启动。"""
+        """生产环境必须显式配置传输白名单；用户 PAT 由 API 动态验证。"""
         if self.environment is Environment.PRODUCTION:
-            if self.token_sha256 is None:
-                raise ValueError("production token_sha256 is required")
             if not self.allowed_hosts or not self.allowed_origins:
                 raise ValueError("production transport allowlists are required")
         return self

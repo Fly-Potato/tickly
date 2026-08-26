@@ -1,7 +1,10 @@
+import logging
 import sqlite3
+from uuid import UUID
 
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
+import pytest
 from sqlalchemy.exc import OperationalError
 
 from app.core.config import Environment, Settings
@@ -69,13 +72,37 @@ def test_explicit_http_error_preserves_status() -> None:
     assert response.json()["error"]["message"] == "Short and stout"
 
 
-def test_unhandled_error_does_not_leak_exception_text() -> None:
-    with TestClient(make_app(), raise_server_exceptions=False) as client:
-        response = client.get("/test/boom", headers={"X-Request-ID": "boom"})
+def test_unhandled_error_does_not_log_protocol_request_id(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    protocol_request_id = "tickly_mcp_12345678-1234-1234-1234-123456789abc.secret"
+    caplog.clear()
+    client = TestClient(make_app(), raise_server_exceptions=False)
+    root_logger = logging.getLogger()
+    root_logger.addHandler(caplog.handler)
+    try:
+        with client:
+            with caplog.at_level(logging.ERROR, logger="tickly.errors"):
+                response = client.get(
+                    "/test/boom",
+                    headers={"X-Request-ID": protocol_request_id},
+                )
+    finally:
+        root_logger.removeHandler(caplog.handler)
     assert response.status_code == 500
-    assert response.headers["X-Request-ID"] == "boom"
-    assert response.json() == {"error": {"code": "internal_error", "message": "服务器内部错误", "request_id": "boom", "details": []}}
+    assert response.headers["X-Request-ID"] == protocol_request_id
+    assert response.json() == {"error": {"code": "internal_error", "message": "服务器内部错误", "request_id": protocol_request_id, "details": []}}
     assert "secret internal text" not in response.text
+    error_records = [
+        record
+        for record in caplog.records
+        if record.name == "tickly.errors"
+        and record.getMessage() == "request.failed"
+    ]
+    assert len(error_records) == 1
+    assert error_records[0].request_id != protocol_request_id
+    UUID(error_records[0].request_id)
+    assert protocol_request_id not in caplog.text
 
 
 def test_sqlite_busy_error_is_a_stable_retryable_response() -> None:

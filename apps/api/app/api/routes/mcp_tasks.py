@@ -1,6 +1,6 @@
 """MCP 服务专用的内部任务 HTTP 契约。
 
-路由只信任 MCP Bearer 依赖解析出的唯一账号，并继续把账号 ID 交给现有
+路由只信任 MCP Bearer 依赖解析出的 Token 所有者，并继续把账号 ID 交给现有
 任务 service 约束所有权。固定集合路由先于流水号详情注册；整个 router 不进入
 公开 OpenAPI，避免 Web 契约与服务间契约混合。
 """
@@ -69,7 +69,7 @@ def list_all(
     session: DbSession,
     user: McpCurrentUser,
 ) -> TaskListResponse:
-    """按唯一账号返回完整根任务组，并保留现有稳定 cursor。"""
+    """按当前 Token 所有者返回完整根任务组，并保留现有稳定 cursor。"""
 
     try:
         page = list_tasks(session, user.id, query)

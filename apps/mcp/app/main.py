@@ -14,10 +14,11 @@ from starlette.types import ASGIApp
 
 from app.api_client import TicklyApiClient
 from app.config import Settings
+from app.errors import McpToolError
 from app.logging import configure_logging
 from app.middleware import (
+    ApiBearerMiddleware,
     RequestIdMiddleware,
-    StaticBearerMiddleware,
     ToolLoggingMiddleware,
 )
 from app.tools import (
@@ -42,9 +43,10 @@ class AppContext:
 
 @dataclass
 class LifecycleState:
-    """只向 HTTP 健康路由暴露当前生命周期是否可用。"""
+    """向 transport 认证与健康路由暴露同一生命周期 API client。"""
 
     http: httpx.AsyncClient | None = None
+    api_client: TicklyApiClient | None = None
 
 
 def build_lifespan(
@@ -74,12 +76,15 @@ def build_lifespan(
             api_client = api_client_override or TicklyApiClient(
                 http,
                 max_response_bytes=settings.max_request_body_size,
+                request_id_header=settings.request_id_header,
             )
             state.http = http
+            state.api_client = api_client
             try:
                 yield AppContext(api_client=api_client)
             finally:
-                # 先让 readiness 失败关闭，再由 AsyncClient context 释放连接。
+                # 先同时关闭认证与 readiness 入口，再由 context 释放连接池。
+                state.api_client = None
                 state.http = None
 
     return lifespan
@@ -87,7 +92,6 @@ def build_lifespan(
 
 def register_health_routes(
     server: MCPServer[AppContext],
-    settings: Settings,
     lifecycle_state: LifecycleState,
 ) -> None:
     """注册不经过 Bearer 的存活与依赖就绪探针。"""
@@ -100,19 +104,18 @@ def register_health_routes(
     @server.custom_route("/ready", methods=["GET"], include_in_schema=False)
     async def ready(request: Request) -> JSONResponse:
         del request
-        # 即使上游可达，缺少 MCP 认证摘要也不能对编排器宣告可接流量。
-        # 该检查必须先于网络请求，避免未配置实例产生无意义的内部探测。
-        if settings.token_sha256 is None:
-            return JSONResponse({"status": "not_ready"}, status_code=503)
         http = lifecycle_state.http
-        if http is None:
+        if http is None or lifecycle_state.api_client is None:
             return JSONResponse({"status": "not_ready"}, status_code=503)
         try:
-            response = await http.get("/ready")
+            # readiness 只需要状态码；使用 streaming context 确定性关闭响应，
+            # 且不读取、解压或缓冲上游可控正文。
+            async with http.stream("GET", "/ready") as response:
+                upstream_status = response.status_code
         except (httpx.TimeoutException, httpx.RequestError):
             # HTTPX 异常可能持有内部 URL；探针只返回固定状态，不串联异常。
             return JSONResponse({"status": "not_ready"}, status_code=503)
-        if response.status_code != 200:
+        if upstream_status != 200:
             return JSONResponse({"status": "not_ready"}, status_code=503)
         return JSONResponse({"status": "ready"})
 
@@ -122,9 +125,10 @@ def create_mcp_server(
     *,
     api_client_override: TicklyApiClient | None = None,
     security_context_provider: SecurityContextProvider | None = None,
+    lifecycle_state: LifecycleState | None = None,
 ) -> MCPServer[AppContext]:
     """创建官方 SDK v2 MCPServer，并绑定 Tickly 单一上游生命周期。"""
-    lifecycle_state = LifecycleState()
+    state = lifecycle_state or LifecycleState()
     server = MCPServer(
         name="tickly",
         title="Tickly Todo",
@@ -135,10 +139,10 @@ def create_mcp_server(
         lifespan=build_lifespan(
             settings,
             api_client_override,
-            lifecycle_state=lifecycle_state,
+            lifecycle_state=state,
         ),
     )
-    register_health_routes(server, settings, lifecycle_state)
+    register_health_routes(server, state)
     # 工具日志必须位于参数安全校验外层，才能观察校验短路且绝不读取 arguments。
     server.middleware.append(ToolLoggingMiddleware())
     resolved_security_context_provider = security_context_provider or partial(
@@ -156,9 +160,11 @@ def create_http_app(
 ) -> ASGIApp:
     """把认证置于 SDK 外层，避免未认证请求获得协议解析细节。"""
     configure_logging(settings)
+    lifecycle_state = LifecycleState()
     server = create_mcp_server(
         settings,
         api_client_override=api_client_override,
+        lifecycle_state=lifecycle_state,
     )
     protocol_app = server.streamable_http_app(
         streamable_http_path="/mcp",
@@ -171,9 +177,18 @@ def create_http_app(
         ),
         host=str(settings.host),
     )
-    authenticated_app = StaticBearerMiddleware(
+
+    async def verify_with_api(token: str, request_id: str) -> None:
+        """只读取当前 active client；未启动或已关闭时固定失败关闭。"""
+        api_client = lifecycle_state.api_client
+        if api_client is None:
+            raise McpToolError("upstream_unavailable", "Tickly API 暂时不可用")
+        await api_client.verify_token(token=token, request_id=request_id)
+
+    authenticated_app = ApiBearerMiddleware(
         protocol_app,
-        expected_sha256=settings.token_sha256,
+        verifier=verify_with_api,
+        request_id_header=settings.request_id_header,
     )
     return RequestIdMiddleware(
         authenticated_app,

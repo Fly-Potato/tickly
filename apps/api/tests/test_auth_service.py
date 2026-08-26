@@ -9,10 +9,10 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.config import Environment, Settings
-from app.core.security import digest_refresh_token
+from app.core.security import decode_token, digest_refresh_token
 from app.db.session import create_engine_for_settings, create_session_factory
 from app.models import AuthSession
-from app.services.accounts import create_account, deactivate_account
+from app.services.accounts import change_password, create_account, deactivate_account
 from app.services.auth import (
     AuthenticationRequired,
     InvalidCredentials,
@@ -125,6 +125,21 @@ def test_refresh_rotates_digest_without_extending_session(
     )
 
 
+def test_legacy_refresh_rotates_after_auth_version_changes_and_issues_current_access(
+    session: Session, settings: Settings
+) -> None:
+    user = create_account(session, "potato", PASSWORD)
+    login = login_user(session, "potato", PASSWORD, settings, user_agent="pytest")
+    assert decode_token(login.refresh_token, "refresh", settings).ver is None
+    user.auth_version = 2
+    session.commit()
+
+    rotated = refresh_session(session, login.refresh_token, settings)
+
+    assert decode_token(rotated.access_token, "access", settings).ver == 2
+    assert authenticate_access_token(session, rotated.access_token, settings).id == user.id
+
+
 def test_refresh_replay_revokes_the_corresponding_session(
     session: Session, settings: Settings
 ) -> None:
@@ -200,3 +215,71 @@ def test_access_token_authentication_reloads_active_user(
         authenticate_access_token(session, login.access_token, settings)
     with pytest.raises(AuthenticationRequired):
         authenticate_access_token(session, "not-a-token", settings)
+
+
+def test_access_token_authentication_rejects_stale_auth_version(
+    session: Session, settings: Settings
+) -> None:
+    user = create_account(session, "potato", PASSWORD)
+    login = login_user(session, "potato", PASSWORD, settings, user_agent=None)
+    user.auth_version = 2
+    session.commit()
+
+    with pytest.raises(AuthenticationRequired):
+        authenticate_access_token(session, login.access_token, settings)
+
+
+def test_password_change_invalidates_old_credentials_across_sessions(
+    tmp_path: Path, settings: Settings
+) -> None:
+    database_path = tmp_path / "password-rotation-flow.db"
+    database_url = f"sqlite:///{database_path}"
+    alembic_config = Config("alembic.ini")
+    alembic_config.set_main_option("sqlalchemy.url", database_url)
+    command.upgrade(alembic_config, "head")
+    engine = create_engine_for_settings(
+        type("Settings", (), {"database_url": database_url})()
+    )
+    session_factory = create_session_factory(engine)
+
+    try:
+        with session_factory() as login_session:
+            create_account(login_session, "potato", PASSWORD)
+            old_login = login_user(
+                login_session,
+                "potato",
+                PASSWORD,
+                settings,
+                user_agent="pytest",
+            )
+            old_access = old_login.access_token
+            old_refresh = old_login.refresh_token
+
+        with session_factory() as maintenance_session:
+            changed = change_password(
+                maintenance_session, "potato", "new correct password"
+            )
+            current_version = changed.auth_version
+
+        with session_factory() as stale_credentials_session:
+            with pytest.raises(AuthenticationRequired):
+                authenticate_access_token(
+                    stale_credentials_session, old_access, settings
+                )
+            with pytest.raises((RefreshRequired, RefreshReplayed)):
+                refresh_session(stale_credentials_session, old_refresh, settings)
+
+        with session_factory() as new_login_session:
+            new_login = login_user(
+                new_login_session,
+                "potato",
+                "new correct password",
+                settings,
+                user_agent="pytest",
+            )
+            assert (
+                decode_token(new_login.access_token, "access", settings).ver
+                == current_version
+            )
+    finally:
+        engine.dispose()

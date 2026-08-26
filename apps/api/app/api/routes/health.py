@@ -3,7 +3,7 @@ import logging
 from fastapi import APIRouter, Request, status
 from sqlalchemy.exc import SQLAlchemyError
 
-from app.core.errors import AppError, request_id_from
+from app.core.errors import AppError, log_request_id_from
 from app.db.readiness import database_migration_is_current
 
 
@@ -35,7 +35,7 @@ def ready(request: Request) -> dict[str, str]:
         logger.warning(
             "readiness.database_unavailable",
             extra={
-                "request_id": request_id_from(request),
+                "request_id": log_request_id_from(request),
                 "error_type": type(exc).__name__,
             },
         )

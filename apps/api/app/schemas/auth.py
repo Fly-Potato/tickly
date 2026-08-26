@@ -1,15 +1,15 @@
 """认证接口的请求与响应 schema。"""
 
-from typing import Literal
+from typing import Annotated, Literal
 
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, Field, field_validator
 
-from app.core.security import normalize_username
+from app.core.security import MAX_PASSWORD_INPUT_LENGTH, normalize_username
 
 
 class LoginRequest(BaseModel):
     username: str
-    password: str
+    password: Annotated[str, Field(max_length=MAX_PASSWORD_INPUT_LENGTH)]
 
     @field_validator("username")
     @classmethod

@@ -1,9 +1,11 @@
+from io import StringIO
 from pathlib import Path
 
 from alembic import command
 from alembic.config import Config
 import pytest
-from sqlalchemy import inspect
+from sqlalchemy import event, inspect
+from sqlalchemy.engine import Engine
 from sqlalchemy.exc import IntegrityError
 
 from app.core.config import API_ROOT
@@ -42,6 +44,390 @@ def test_initial_migration_can_upgrade_and_downgrade_file_database(tmp_path: Pat
     # Alembic 自己的版本表保留，但业务表必须全部回退。
     assert set(inspect(engine).get_table_names()) == {"alembic_version"}
     engine.dispose()
+
+
+def test_mcp_token_migration_backfills_auth_version_and_can_downgrade(
+    tmp_path: Path,
+) -> None:
+    database_path = tmp_path / "mcp-token-migration.db"
+    database_url = f"sqlite:///{database_path}"
+    config = Config("alembic.ini")
+    config.set_main_option("sqlalchemy.url", database_url)
+    command.upgrade(config, "0003_add_cancelled_task_status")
+    engine = create_engine_for_settings(
+        type("Settings", (), {"database_url": database_url})()
+    )
+
+    with engine.begin() as connection:
+        connection.exec_driver_sql(
+            "INSERT INTO users "
+            "(id, username, password_hash, timezone, is_active, created_at, updated_at) "
+            "VALUES "
+            "('existing-user', 'owner', 'hash', 'Asia/Shanghai', 1, "
+            "'2026-08-01', '2026-08-01')"
+        )
+        connection.exec_driver_sql(
+            "INSERT INTO auth_sessions "
+            "(id, user_id, refresh_token_hash, expires_at, revoked_at, "
+            "last_used_at, user_agent, created_at) VALUES "
+            "('existing-session', 'existing-user', 'refresh-hash', "
+            "'2026-09-01', NULL, '2026-08-02', '迁移测试客户端', '2026-08-01')"
+        )
+        connection.exec_driver_sql(
+            "INSERT INTO tasks "
+            "(id, user_id, serial, title, description, priority, topic, status, "
+            "due_at, completed_at, parent_id, created_at, updated_at) VALUES "
+            "('parent-task', 'existing-user', 1, '父任务', '迁移前父任务', "
+            "'high', 'Tickly', 'in_progress', '2026-08-31', NULL, NULL, "
+            "'2026-08-01', '2026-08-02'), "
+            "('child-task', 'existing-user', 2, '子任务', '迁移前子任务', "
+            "NULL, 'Tickly', 'completed', NULL, '2026-08-03', 'parent-task', "
+            "'2026-08-01', '2026-08-03')"
+        )
+
+    user_projection = (
+        "id, username, password_hash, timezone, is_active, next_task_serial, "
+        "created_at, updated_at"
+    )
+    session_projection = (
+        "id, user_id, refresh_token_hash, expires_at, revoked_at, last_used_at, "
+        "user_agent, created_at"
+    )
+    task_projection = (
+        "id, user_id, serial, title, description, priority, topic, status, "
+        "due_at, completed_at, parent_id, created_at, updated_at"
+    )
+    with engine.connect() as connection:
+        expected_users = connection.exec_driver_sql(
+            f"SELECT {user_projection} FROM users ORDER BY id"
+        ).mappings().all()
+        expected_sessions = connection.exec_driver_sql(
+            f"SELECT {session_projection} FROM auth_sessions ORDER BY id"
+        ).mappings().all()
+        expected_tasks = connection.exec_driver_sql(
+            f"SELECT {task_projection} FROM tasks ORDER BY id"
+        ).mappings().all()
+
+    command.upgrade(config, "head")
+    upgraded_inspector = inspect(engine)
+    upgraded_user_columns = {
+        column["name"] for column in upgraded_inspector.get_columns("users")
+    }
+    upgraded_token_columns = {
+        column["name"]: column
+        for column in upgraded_inspector.get_columns("mcp_tokens")
+    }
+    upgraded_token_checks = {
+        check["name"]: " ".join(check["sqltext"].split())
+        for check in upgraded_inspector.get_check_constraints("mcp_tokens")
+    }
+    upgraded_token_uniques = {
+        unique["name"]: unique["column_names"]
+        for unique in upgraded_inspector.get_unique_constraints("mcp_tokens")
+    }
+    upgraded_token_indexes = {
+        index["name"]: index["column_names"]
+        for index in upgraded_inspector.get_indexes("mcp_tokens")
+    }
+    upgraded_token_foreign_keys = {
+        tuple(foreign_key["constrained_columns"]): foreign_key
+        for foreign_key in upgraded_inspector.get_foreign_keys("mcp_tokens")
+    }
+    assert "mcp_tokens" in upgraded_inspector.get_table_names()
+    assert "auth_version" in upgraded_user_columns
+    assert set(upgraded_token_columns) == {
+        "id",
+        "user_id",
+        "name",
+        "token_hash",
+        "expires_at",
+        "revoked_at",
+        "last_used_at",
+        "created_at",
+    }
+    for column_name in ("id", "user_id", "name", "token_hash", "created_at"):
+        assert upgraded_token_columns[column_name]["nullable"] is False
+    for column_name in ("expires_at", "revoked_at", "last_used_at"):
+        assert upgraded_token_columns[column_name]["nullable"] is True
+    assert upgraded_token_checks == {
+        "ck_mcp_tokens_name_length": (
+            "instr(name, char(0)) = 0 AND length(name) BETWEEN 1 AND 64"
+        ),
+        "ck_mcp_tokens_hash_format": (
+            "instr(token_hash, char(0)) = 0 AND length(token_hash) = 64 "
+            "AND token_hash = lower(token_hash) AND token_hash NOT GLOB '*[^0-9a-f]*'"
+        ),
+    }
+    assert upgraded_token_uniques == {
+        "uq_mcp_tokens_token_hash": ["token_hash"]
+    }
+    assert upgraded_token_indexes == {"ix_mcp_tokens_user_id": ["user_id"]}
+    migrated_user_foreign_key = upgraded_token_foreign_keys[("user_id",)]
+    assert migrated_user_foreign_key["referred_table"] == "users"
+    assert migrated_user_foreign_key["referred_columns"] == ["id"]
+    assert migrated_user_foreign_key["options"]["ondelete"] == "CASCADE"
+    with engine.connect() as connection:
+        assert connection.exec_driver_sql(
+            "SELECT auth_version FROM users WHERE id = 'existing-user'"
+        ).scalar_one() == 1
+        assert connection.exec_driver_sql(
+            f"SELECT {user_projection} FROM users ORDER BY id"
+        ).mappings().all() == expected_users
+        assert connection.exec_driver_sql(
+            f"SELECT {session_projection} FROM auth_sessions ORDER BY id"
+        ).mappings().all() == expected_sessions
+        assert connection.exec_driver_sql(
+            f"SELECT {task_projection} FROM tasks ORDER BY id"
+        ).mappings().all() == expected_tasks
+
+    command.downgrade(config, "0003_add_cancelled_task_status")
+    downgraded_inspector = inspect(engine)
+    downgraded_user_columns = {
+        column["name"] for column in downgraded_inspector.get_columns("users")
+    }
+    assert "mcp_tokens" not in downgraded_inspector.get_table_names()
+    assert "auth_version" not in downgraded_user_columns
+    with engine.connect() as connection:
+        assert connection.exec_driver_sql(
+            f"SELECT {user_projection} FROM users ORDER BY id"
+        ).mappings().all() == expected_users
+        assert connection.exec_driver_sql(
+            f"SELECT {session_projection} FROM auth_sessions ORDER BY id"
+        ).mappings().all() == expected_sessions
+        assert connection.exec_driver_sql(
+            f"SELECT {task_projection} FROM tasks ORDER BY id"
+        ).mappings().all() == expected_tasks
+        assert connection.exec_driver_sql("PRAGMA foreign_key_check").all() == []
+
+    engine.dispose()
+
+
+@pytest.mark.parametrize(
+    ("name", "token_hash"),
+    [
+        ("\0开头", "a" * 64),
+        ("中间\0字符", "b" * 64),
+        ("名" * 64 + "\0", "c" * 64),
+        ("有效名称", "\0" + "d" * 64),
+        ("有效名称", "e" * 32 + "\0" + "e" * 32),
+        ("有效名称", "f" * 64 + "\0"),
+    ],
+    ids=[
+        "迁移表名称开头不允许空字符",
+        "迁移表名称中间不允许空字符",
+        "迁移表名称第六十四字符后不允许空字符",
+        "迁移表摘要开头不允许空字符",
+        "迁移表摘要中间不允许空字符",
+        "迁移表摘要第六十四字符后不允许空字符",
+    ],
+)
+def test_mcp_token_migration_rejects_embedded_nul(
+    tmp_path: Path,
+    name: str,
+    token_hash: str,
+) -> None:
+    database_path = tmp_path / "mcp-token-nul.db"
+    database_url = f"sqlite:///{database_path}"
+    config = Config("alembic.ini")
+    config.set_main_option("sqlalchemy.url", database_url)
+    command.upgrade(config, "head")
+    engine = create_engine_for_settings(
+        type("Settings", (), {"database_url": database_url})()
+    )
+
+    with engine.begin() as connection:
+        connection.exec_driver_sql(
+            "INSERT INTO users "
+            "(id, username, password_hash, timezone, is_active, created_at, updated_at) "
+            "VALUES "
+            "('nul-owner', 'owner', 'hash', 'Asia/Shanghai', 1, "
+            "'2026-08-01', '2026-08-01')"
+        )
+
+    with pytest.raises(IntegrityError):
+        with engine.begin() as connection:
+            connection.exec_driver_sql(
+                "INSERT INTO mcp_tokens "
+                "(id, user_id, name, token_hash, created_at) "
+                "VALUES ('nul-token', 'nul-owner', ?, ?, '2026-08-01')",
+                (name, token_hash),
+            )
+
+    engine.dispose()
+
+
+def test_mcp_token_downgrade_failure_rolls_back_and_can_retry(tmp_path: Path) -> None:
+    database_path = tmp_path / "mcp-token-downgrade-failure.db"
+    database_url = f"sqlite:///{database_path}"
+    config = Config("alembic.ini")
+    config.set_main_option("sqlalchemy.url", database_url)
+    command.upgrade(config, "head")
+    engine = create_engine_for_settings(
+        type("Settings", (), {"database_url": database_url})()
+    )
+
+    with engine.begin() as connection:
+        connection.exec_driver_sql(
+            "INSERT INTO users "
+            "(id, username, password_hash, timezone, is_active, created_at, updated_at) "
+            "VALUES ('fault-user', 'owner', 'hash', 'Asia/Shanghai', 1, "
+            "'2026-08-01', '2026-08-01')"
+        )
+        connection.exec_driver_sql(
+            "INSERT INTO auth_sessions "
+            "(id, user_id, refresh_token_hash, expires_at, revoked_at, "
+            "last_used_at, user_agent, created_at) VALUES "
+            "('fault-session', 'fault-user', 'fault-refresh', '2026-09-01', "
+            "NULL, '2026-08-02', NULL, '2026-08-01')"
+        )
+        connection.exec_driver_sql(
+            "INSERT INTO tasks "
+            "(id, user_id, serial, title, description, priority, topic, status, "
+            "due_at, completed_at, parent_id, created_at, updated_at) VALUES "
+            "('fault-parent', 'fault-user', 1, '父任务', '父任务', NULL, "
+            "'Tickly', 'new', NULL, NULL, NULL, '2026-08-01', '2026-08-01'), "
+            "('fault-child', 'fault-user', 2, '子任务', '子任务', NULL, "
+            "'Tickly', 'in_progress', NULL, NULL, 'fault-parent', "
+            "'2026-08-01', '2026-08-02')"
+        )
+        connection.exec_driver_sql(
+            "INSERT INTO mcp_tokens "
+            "(id, user_id, name, token_hash, created_at) VALUES "
+            "('fault-token', 'fault-user', '故障注入', ?, '2026-08-01')",
+            ("a" * 64,),
+        )
+
+    with engine.connect() as connection:
+        expected_users = connection.exec_driver_sql(
+            "SELECT * FROM users ORDER BY id"
+        ).mappings().all()
+        expected_legacy_users = connection.exec_driver_sql(
+            "SELECT id, username, password_hash, timezone, is_active, "
+            "next_task_serial, created_at, updated_at FROM users ORDER BY id"
+        ).mappings().all()
+        expected_sessions = connection.exec_driver_sql(
+            "SELECT * FROM auth_sessions ORDER BY id"
+        ).mappings().all()
+        expected_tasks = connection.exec_driver_sql(
+            "SELECT * FROM tasks ORDER BY id"
+        ).mappings().all()
+        expected_tokens = connection.exec_driver_sql(
+            "SELECT * FROM mcp_tokens ORDER BY id"
+        ).mappings().all()
+
+    observed_statements: list[str] = []
+
+    def inject_user_schema_failure(
+        _connection,
+        _cursor,
+        statement: str,
+        _parameters,
+        _context,
+        _executemany,
+    ) -> None:
+        normalized_statement = " ".join(statement.replace('"', "").split()).lower()
+        observed_statements.append(normalized_statement)
+        direct_drop = "alter table users drop column auth_version"
+        batch_rename = "alter table _alembic_tmp_users rename to users"
+        if direct_drop in normalized_statement or batch_rename in normalized_statement:
+            raise RuntimeError("注入用户表结构变更失败")
+
+    event.listen(Engine, "before_cursor_execute", inject_user_schema_failure)
+    try:
+        with pytest.raises(RuntimeError, match="注入用户表结构变更失败"):
+            command.downgrade(config, "0003_add_cancelled_task_status")
+    finally:
+        event.remove(Engine, "before_cursor_execute", inject_user_schema_failure)
+
+    # 注入点必须晚于 Token 索引和表的删除，才能证明整个 revision 的原子回滚。
+    assert any(
+        "drop index ix_mcp_tokens_user_id" in statement
+        for statement in observed_statements
+    )
+    assert any(
+        "drop table mcp_tokens" in statement for statement in observed_statements
+    )
+    failed_inspector = inspect(engine)
+    assert "_alembic_tmp_users" not in failed_inspector.get_table_names()
+    assert "mcp_tokens" in failed_inspector.get_table_names()
+    assert {
+        index["name"] for index in failed_inspector.get_indexes("mcp_tokens")
+    } == {"ix_mcp_tokens_user_id"}
+    assert {
+        check["name"]
+        for check in failed_inspector.get_check_constraints("mcp_tokens")
+    } == {"ck_mcp_tokens_name_length", "ck_mcp_tokens_hash_format"}
+    assert {
+        unique["name"]
+        for unique in failed_inspector.get_unique_constraints("mcp_tokens")
+    } == {"uq_mcp_tokens_token_hash"}
+    failed_token_foreign_key = failed_inspector.get_foreign_keys("mcp_tokens")[0]
+    assert failed_token_foreign_key["referred_table"] == "users"
+    assert failed_token_foreign_key["options"]["ondelete"] == "CASCADE"
+    assert "auth_version" in {
+        column["name"] for column in failed_inspector.get_columns("users")
+    }
+    with engine.connect() as connection:
+        assert connection.exec_driver_sql(
+            "SELECT version_num FROM alembic_version"
+        ).scalar_one() == "0004_multi_user_mcp_tokens"
+        assert connection.exec_driver_sql(
+            "SELECT * FROM users ORDER BY id"
+        ).mappings().all() == expected_users
+        assert connection.exec_driver_sql(
+            "SELECT * FROM auth_sessions ORDER BY id"
+        ).mappings().all() == expected_sessions
+        assert connection.exec_driver_sql(
+            "SELECT * FROM tasks ORDER BY id"
+        ).mappings().all() == expected_tasks
+        assert connection.exec_driver_sql(
+            "SELECT * FROM mcp_tokens ORDER BY id"
+        ).mappings().all() == expected_tokens
+
+    command.downgrade(config, "0003_add_cancelled_task_status")
+    retried_inspector = inspect(engine)
+    assert "mcp_tokens" not in retried_inspector.get_table_names()
+    assert "auth_version" not in {
+        column["name"] for column in retried_inspector.get_columns("users")
+    }
+    with engine.connect() as connection:
+        assert connection.exec_driver_sql(
+            "SELECT version_num FROM alembic_version"
+        ).scalar_one() == "0003_add_cancelled_task_status"
+        assert connection.exec_driver_sql(
+            "SELECT id, username, password_hash, timezone, is_active, "
+            "next_task_serial, created_at, updated_at FROM users ORDER BY id"
+        ).mappings().all() == expected_legacy_users
+        assert connection.exec_driver_sql(
+            "SELECT * FROM auth_sessions ORDER BY id"
+        ).mappings().all() == expected_sessions
+        assert connection.exec_driver_sql(
+            "SELECT * FROM tasks ORDER BY id"
+        ).mappings().all() == expected_tasks
+        assert connection.exec_driver_sql("PRAGMA foreign_key_check").all() == []
+
+    engine.dispose()
+
+
+def test_mcp_token_downgrade_can_render_offline_sql() -> None:
+    output = StringIO()
+    config = Config("alembic.ini", output_buffer=output)
+    config.set_main_option("sqlalchemy.url", "sqlite:///offline-migration.db")
+
+    # 离线发布审查没有真实 DBAPI 连接，只允许 Alembic 渲染目标 revision 的 SQL。
+    command.downgrade(
+        config,
+        "0004_multi_user_mcp_tokens:0003_add_cancelled_task_status",
+        sql=True,
+    )
+
+    rendered_sql = " ".join(output.getvalue().split())
+    assert "DROP INDEX ix_mcp_tokens_user_id" in rendered_sql
+    assert "DROP TABLE mcp_tokens" in rendered_sql
+    assert "ALTER TABLE users DROP COLUMN auth_version" in rendered_sql
+    assert "UPDATE alembic_version" in rendered_sql
+    assert "0004_multi_user_mcp_tokens" in rendered_sql
+    assert "0003_add_cancelled_task_status" in rendered_sql
 
 
 def test_migration_uses_database_url_from_environment(
@@ -494,7 +880,7 @@ def test_task_model_migration_rejects_orphans_before_ddl_and_can_retry(
     with engine.connect() as connection:
         assert connection.exec_driver_sql(
             "SELECT version_num FROM alembic_version"
-        ).scalar_one() == "0003_add_cancelled_task_status"
+        ).scalar_one() == "0004_multi_user_mcp_tokens"
     assert "serial" in {
         column["name"] for column in inspect(engine).get_columns("tasks")
     }

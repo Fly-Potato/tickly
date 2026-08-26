@@ -1,4 +1,5 @@
 from collections.abc import Iterator
+import logging
 from pathlib import Path
 
 import pytest
@@ -6,6 +7,7 @@ from alembic import command
 from alembic.config import Config
 from fastapi.testclient import TestClient
 
+import app.services.auth as auth_services
 from app.core.config import Environment, Settings
 from app.db.session import create_engine_for_settings, create_session_factory
 from app.main import create_app
@@ -13,6 +15,7 @@ from app.services.accounts import create_account, deactivate_account
 
 
 PASSWORD = "correct horse battery staple"
+OVERSIZED_PASSWORD = "oversized-login-secret-" + "x" * 1024
 
 
 @pytest.fixture
@@ -60,6 +63,7 @@ def test_login_sets_refresh_cookie_and_returns_access_token(
     assert "HttpOnly" in cookie
     assert "SameSite=strict" in cookie
     assert "Path=/api/v1/auth" in cookie
+    assert "Secure" not in cookie
 
 
 @pytest.mark.parametrize(
@@ -85,6 +89,53 @@ def test_login_failures_use_one_safe_response(
         }
     }
     assert password not in response.text
+
+
+def test_login_rejects_oversized_password_before_argon2(
+    auth_client: TestClient,
+    caplog: pytest.LogCaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    argon2_calls: list[str] = []
+    real_verify_password = auth_services.verify_password
+    real_verify_dummy_password = auth_services.verify_dummy_password
+
+    def observe_verify_password(value: str, encoded: str) -> bool:
+        argon2_calls.append("verify")
+        return real_verify_password(value, encoded)
+
+    def observe_dummy_password(value: str) -> None:
+        argon2_calls.append("dummy")
+        real_verify_dummy_password(value)
+
+    monkeypatch.setattr(
+        auth_services,
+        "verify_password",
+        observe_verify_password,
+    )
+    monkeypatch.setattr(
+        auth_services,
+        "verify_dummy_password",
+        observe_dummy_password,
+    )
+    caplog.clear()
+    root_logger = logging.getLogger()
+    root_logger.addHandler(caplog.handler)
+
+    try:
+        with caplog.at_level(logging.DEBUG):
+            response = auth_client.post(
+                "/api/v1/auth/login",
+                json={"username": "potato", "password": OVERSIZED_PASSWORD},
+            )
+    finally:
+        root_logger.removeHandler(caplog.handler)
+
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "validation_error"
+    assert argon2_calls == []
+    assert OVERSIZED_PASSWORD not in response.text
+    assert OVERSIZED_PASSWORD not in caplog.text
 
 
 def test_me_requires_bearer_and_returns_only_public_user_fields(
@@ -124,6 +175,10 @@ def test_refresh_rotates_cookie_and_replay_revokes_the_session(
     assert refreshed.status_code == 200
     assert refreshed.json()["access_token"] != first_login.json()["access_token"]
     assert new_refresh != old_refresh
+    rotated_cookie = refreshed.headers["set-cookie"]
+    assert "HttpOnly" in rotated_cookie
+    assert "SameSite=strict" in rotated_cookie
+    assert "Path=/api/v1/auth" in rotated_cookie
 
     with TestClient(auth_client.app) as replay_client:
         replay = replay_client.post(
@@ -148,6 +203,9 @@ def test_refresh_requires_cookie_and_clears_invalid_cookie(
     assert response.status_code == 401
     assert response.json()["error"]["code"] == "refresh_required"
     assert "Max-Age=0" in response.headers["set-cookie"]
+    assert "HttpOnly" in response.headers["set-cookie"]
+    assert "SameSite=strict" in response.headers["set-cookie"]
+    assert "Path=/api/v1/auth" in response.headers["set-cookie"]
     assert "not-a-token" not in response.text
 
 
@@ -163,6 +221,8 @@ def test_logout_is_idempotent_and_always_clears_cookie(
     assert first.content == b""
     assert second.status_code == 204
     assert "Max-Age=0" in first.headers["set-cookie"]
+    assert "HttpOnly" in first.headers["set-cookie"]
+    assert "Path=/api/v1/auth" in first.headers["set-cookie"]
     assert "SameSite=strict" in first.headers["set-cookie"]
 
 

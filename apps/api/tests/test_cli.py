@@ -60,18 +60,28 @@ def test_create_cli_rejects_mismatched_password_without_writing_account(
     assert "账号已创建" in captured.out
 
 
-def test_create_cli_refuses_a_second_account(
+def test_create_cli_allows_distinct_accounts_and_rejects_normalized_duplicate(
     monkeypatch: pytest.MonkeyPatch,
     cli_database_url: str,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    set_password_answers(monkeypatch, PASSWORD, PASSWORD, NEW_PASSWORD, NEW_PASSWORD)
+    set_password_answers(
+        monkeypatch,
+        PASSWORD,
+        PASSWORD,
+        NEW_PASSWORD,
+        NEW_PASSWORD,
+        NEW_PASSWORD,
+        NEW_PASSWORD,
+    )
 
     assert main(["user", "create", "--username", "potato"]) == 0
-    assert main(["user", "create", "--username", "second"]) != 0
+    assert main(["user", "create", "--username", "second"]) == 0
+    assert main(["user", "create", "--username", " Potato "]) != 0
 
     captured = capsys.readouterr()
-    assert "只能创建一个账号" in captured.err
+    assert captured.out.count("账号已创建") == 2
+    assert "错误：用户名已存在" in captured.err
     assert PASSWORD not in captured.out + captured.err
     assert NEW_PASSWORD not in captured.out + captured.err
     assert cli_database_url not in captured.out + captured.err

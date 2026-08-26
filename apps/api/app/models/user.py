@@ -2,13 +2,14 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 from uuid import uuid4
 
-from sqlalchemy import CheckConstraint, String
+from sqlalchemy import CheckConstraint, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
 
 if TYPE_CHECKING:
     from app.models.auth_session import AuthSession
+    from app.models.mcp_token import McpToken
     from app.models.task import Task
 
 
@@ -39,6 +40,9 @@ class User(Base):
     next_task_serial: Mapped[int] = mapped_column(
         nullable=False, default=1, server_default="1"
     )
+    auth_version: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=1, server_default="1"
+    )
     created_at: Mapped[datetime] = mapped_column(nullable=False, default=utc_now)
     updated_at: Mapped[datetime] = mapped_column(nullable=False, default=utc_now, onupdate=utc_now)
 
@@ -46,5 +50,8 @@ class User(Base):
         back_populates="user", cascade="all, delete-orphan"
     )
     tasks: Mapped[list["Task"]] = relationship(
+        back_populates="user", cascade="all, delete-orphan"
+    )
+    mcp_tokens: Mapped[list["McpToken"]] = relationship(
         back_populates="user", cascade="all, delete-orphan"
     )

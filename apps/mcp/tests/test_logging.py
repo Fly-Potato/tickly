@@ -19,6 +19,7 @@ from uvicorn.config import LOGGING_CONFIG
 from uvicorn.logging import AccessFormatter
 
 from app.config import Environment, Settings
+from app.errors import McpToolError
 from app.logging import JsonFormatter, TextFormatter, configure_logging
 from app.main import create_http_app
 from app.middleware import ToolLoggingMiddleware
@@ -35,7 +36,6 @@ def make_settings(**overrides: Any) -> Settings:
     """构造不读取开发环境文件的最小 HTTP 测试配置。"""
     values: dict[str, Any] = {
         "environment": Environment.TEST,
-        "token_sha256": TOKEN_SHA256,
         "allowed_hosts": ["testserver"],
         "allowed_origins": ["https://codex.example"],
         "api_base_url": "http://api:8321",
@@ -322,7 +322,10 @@ def test_real_http_access_log_excludes_authorization_body_and_query(
     """真实 ASGI 请求只记录规范 path，不记录 query、Bearer 或请求正文。"""
     from starlette.testclient import TestClient
 
-    application = create_http_app(make_settings())
+    application = create_http_app(
+        make_settings(),
+        api_client_override=FakeApiClient(),  # type: ignore[arg-type]
+    )
     with caplog.at_level(logging.INFO, logger="tickly.mcp.access"):
         with TestClient(application) as client:
             response = client.post(
@@ -399,6 +402,12 @@ class FakeApiClient:
 
     def __init__(self) -> None:
         self.request_ids: list[str] = []
+
+    async def verify_token(self, *, token: str, request_id: str) -> None:
+        """模拟 API 权威认证，且错误对象不保留原始 PAT。"""
+        del request_id
+        if token != RAW_TOKEN:
+            raise McpToolError("authentication_required", "需要 MCP 认证")
 
     async def list_topics(self, **values: object) -> TopicListPayload:
         request_id = values["request_id"]

@@ -61,7 +61,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         print("错误：确认用户名不匹配", file=sys.stderr)
         return 1
     except AccountAlreadyExists:
-        print("错误：当前只能创建一个账号", file=sys.stderr)
+        print("错误：用户名已存在", file=sys.stderr)
         return 1
     except AccountNotFound:
         print("错误：账号不存在", file=sys.stderr)
@@ -79,7 +79,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Tickly 后端维护命令")
     groups = parser.add_subparsers(dest="group", required=True)
-    user_parser = groups.add_parser("user", help="维护唯一账号")
+    user_parser = groups.add_parser("user", help="维护账号")
     commands = user_parser.add_subparsers(dest="command", required=True)
 
     for command, help_text in (

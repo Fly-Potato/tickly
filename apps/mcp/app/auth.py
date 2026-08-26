@@ -1,22 +1,25 @@
-"""MCP 静态 Bearer Token 的解析与常量时间校验。"""
-
-import hashlib
-import secrets
+"""MCP Bearer Token 的严格解析边界。"""
 
 
-def bearer_matches(token: str, expected_sha256: str | None) -> bool:
-    """只比较摘要，服务端不持有可用于鉴权的明文配置。"""
-    actual = hashlib.sha256(token.encode("utf-8")).hexdigest()
-    return expected_sha256 is not None and secrets.compare_digest(
-        actual, expected_sha256
-    )
+MAX_BEARER_TOKEN_LENGTH = 512
 
 
 def token_from_authorization(value: str | None) -> str | None:
-    """解析单个 Bearer 凭据；格式不完整时统一返回未认证。"""
+    """解析单个安全 ASCII Bearer；危险字节不得进入 HTTP client。
+
+    不在网关校验 PAT 业务格式，普通可打印 ASCII 仍交 API 权威判断；这里只
+    限制 header 语法、控制字符和资源上限，避免 HTTPX 编码异常与超长转发。
+    """
     if value is None:
         return None
-    scheme, separator, token = value.partition(" ")
-    if separator != " " or scheme.lower() != "bearer" or not token:
+    parts = value.split(" ")
+    if len(parts) != 2:
+        return None
+    scheme, token = parts
+    if (
+        scheme.lower() != "bearer"
+        or not 1 <= len(token) <= MAX_BEARER_TOKEN_LENGTH
+        or any(not 0x21 <= ord(character) <= 0x7E for character in token)
+    ):
         return None
     return token
