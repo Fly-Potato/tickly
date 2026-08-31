@@ -27,6 +27,7 @@ class TaskStatus(StrEnum):
 
 
 class TaskStatusFilter(StrEnum):
+    ACTIVE = "active"
     ALL = "all"
     NEW = "new"
     IN_PROGRESS = "in_progress"
@@ -147,10 +148,10 @@ class TaskUpdateRequest(BaseModel):
 class TaskListQuery(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    status: TaskStatusFilter = TaskStatusFilter.ALL
+    status: TaskStatusFilter = TaskStatusFilter.ACTIVE
     query: str | None = Field(default=None, max_length=200)
     topic: str | None = Field(default=None, max_length=100)
-    sort: TaskSort = TaskSort.CREATED_AT
+    sort: TaskSort = TaskSort.PRIORITY
     order: SortOrder = SortOrder.DESC
     cursor: str | None = Field(default=None, min_length=1, max_length=2048)
     limit: int = Field(default=50, ge=1, le=100)

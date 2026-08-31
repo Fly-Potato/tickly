@@ -246,7 +246,7 @@ describe("Todo 工作区", () => {
     const user = userEvent.setup()
     renderWorkspace()
     expect(
-      await screen.findByText("还没有任务，先写下第一件事。")
+      await screen.findByText("没有待处理的任务。")
     ).toBeInTheDocument()
     expect(screen.queryByLabelText("任务标题")).not.toBeInTheDocument()
 
@@ -389,7 +389,7 @@ describe("Todo 工作区", () => {
     const user = userEvent.setup()
     renderWorkspace()
 
-    await screen.findByText("还没有任务，先写下第一件事。")
+    await screen.findByText("没有待处理的任务。")
     await user.click(screen.getByRole("button", { name: "Cancelled" }))
     await waitFor(() =>
       expect(tasks.listTasks).toHaveBeenLastCalledWith(
@@ -430,10 +430,6 @@ describe("Todo 工作区", () => {
       "当前筛选：Cancelled"
     )
 
-    expect(tasks.listTasks).not.toHaveBeenCalledWith(
-      expect.objectContaining({ status: "active" }),
-      expect.any(AbortSignal)
-    )
   })
 
   it("筛选播报节点稳定挂载并与视觉摘要显隐同步", async () => {
@@ -441,12 +437,12 @@ describe("Todo 工作区", () => {
     const user = userEvent.setup()
     renderWorkspace()
 
-    await screen.findByText("还没有任务，先写下第一件事。")
+    await screen.findByText("没有待处理的任务。")
     const liveStatus = screen.getByRole("status", { name: "筛选变化" })
-    expect(liveStatus).toHaveTextContent("当前筛选：无")
-    expect(
-      screen.queryByRole("region", { name: "当前筛选" })
-    ).not.toBeInTheDocument()
+    expect(liveStatus).toHaveTextContent("当前筛选：Active")
+    expect(screen.getByRole("region", { name: "当前筛选" })).toHaveTextContent(
+      "Active"
+    )
 
     await user.click(screen.getByRole("button", { name: "In Progress" }))
     expect(
@@ -474,7 +470,7 @@ describe("Todo 工作区", () => {
     const user = userEvent.setup()
     renderWorkspace()
 
-    await screen.findByText("还没有任务，先写下第一件事。")
+    await screen.findByText("没有待处理的任务。")
     await waitFor(() => expect(tasks.listTaskTopics).toHaveBeenCalledOnce())
     const initialListCalls = tasks.listTasks.mock.calls.length
 
@@ -515,7 +511,7 @@ describe("Todo 工作区", () => {
     tasks.createTask.mockRejectedValue(new Error("secret network detail"))
     const user = userEvent.setup()
     renderWorkspace()
-    await screen.findByText("还没有任务，先写下第一件事。")
+    await screen.findByText("没有待处理的任务。")
     await user.click(screen.getByRole("button", { name: "新建待办" }))
     const dialog = screen.getByRole("dialog", { name: "新建待办" })
     const titleInput = within(dialog).getByLabelText("标题")
@@ -641,7 +637,7 @@ describe("Todo 工作区", () => {
     await user.click(screen.getByRole("button", { name: "重新加载" }))
 
     expect(
-      await screen.findByText("还没有任务，先写下第一件事。")
+      await screen.findByText("没有待处理的任务。")
     ).toBeInTheDocument()
   })
 })
@@ -670,6 +666,7 @@ describe("Task4 列表契约", () => {
   })
 
   it.each([
+    ["active", "没有待处理的任务。"],
     ["all", "还没有任务，先写下第一件事。"],
     ["new", "还没有新任务。"],
     ["in_progress", "没有进行中的任务。"],
@@ -818,7 +815,7 @@ describe("Task3 筛选组件", () => {
     expect(onApply).not.toHaveBeenCalled()
 
     await user.click(trigger)
-    expect(screen.getByRole("button", { name: "全部" })).toHaveAttribute(
+    expect(screen.getByRole("button", { name: "Active" })).toHaveAttribute(
       "aria-pressed",
       "true"
     )

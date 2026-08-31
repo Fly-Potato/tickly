@@ -7,6 +7,7 @@ const STATUS_OPTIONS: ReadonlyArray<{
   value: TaskStatusFilter
   label: string
 }> = [
+  { value: "active", label: "Active" },
   { value: "all", label: "全部" },
   { value: "new", label: "New" },
   { value: "in_progress", label: "In Progress" },

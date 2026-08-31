@@ -683,15 +683,16 @@ async def test_read_tool_input_and_output_json_schemas_are_explicit() -> None:
         "limit",
     }
     assert list_schema.get("required", []) == []
-    assert list_schema["properties"]["status"]["default"] == "all"
+    assert list_schema["properties"]["status"]["default"] == "active"
     assert set(list_schema["properties"]["status"]["enum"]) == {
+        "active",
         "all",
         "new",
         "in_progress",
         "completed",
         "cancelled",
     }
-    assert list_schema["properties"]["sort"]["default"] == "created_at"
+    assert list_schema["properties"]["sort"]["default"] == "priority"
     assert list_schema["properties"]["order"]["default"] == "desc"
     assert list_schema["properties"]["limit"] == {
         "default": 50,
@@ -795,9 +796,9 @@ async def test_read_tools_forward_stable_defaults() -> None:
                 "token": TOKEN,
                 "request_id": REQUEST_ID,
                 "query": None,
-                "status": "all",
+                "status": "active",
                 "topic": None,
-                "sort": "created_at",
+                "sort": "priority",
                 "order": "desc",
                 "cursor": None,
                 "limit": 50,
@@ -879,9 +880,9 @@ async def test_integer_inputs_reject_coercion_before_calling_upstream(
                     "token": TOKEN,
                     "request_id": REQUEST_ID,
                     "query": None,
-                    "status": "all",
+                    "status": "active",
                     "topic": None,
-                    "sort": "created_at",
+                    "sort": "priority",
                     "order": "desc",
                     "cursor": None,
                     "limit": 25,

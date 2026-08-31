@@ -3,7 +3,7 @@ import { responseError } from "@/lib/api-error"
 
 export type TaskPriority = "low" | "medium" | "high"
 export type TaskStatus = "new" | "in_progress" | "completed" | "cancelled"
-export type TaskStatusFilter = "all" | TaskStatus
+export type TaskStatusFilter = "active" | "all" | TaskStatus
 export type TaskSort = "serial" | "created_at" | "due_at" | "priority"
 export type SortOrder = "asc" | "desc"
 
@@ -85,8 +85,8 @@ export type ParentOptionPage = {
 }
 
 export const DEFAULT_TASK_QUERY = {
-  status: "all",
-  sort: "created_at",
+  status: "active",
+  sort: "priority",
   order: "desc",
   limit: 50,
 } as const satisfies TaskListQuery

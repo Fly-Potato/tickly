@@ -59,8 +59,8 @@ beforeEach(() => {
 describe("任务 API 客户端", () => {
   it("默认 query 使用服务端约定的分页和排序", () => {
     expect(DEFAULT_TASK_QUERY).toEqual({
-      status: "all",
-      sort: "created_at",
+      status: "active",
+      sort: "priority",
       order: "desc",
       limit: 50,
     })
@@ -102,7 +102,7 @@ describe("任务 API 客户端", () => {
     })
 
     expect(api.apiFetch).toHaveBeenCalledWith(
-      "/api/v1/tasks?status=all&sort=created_at&order=desc&limit=50&topic=",
+      "/api/v1/tasks?status=active&sort=priority&order=desc&limit=50&topic=",
       { signal: undefined }
     )
   })
@@ -115,7 +115,7 @@ describe("任务 API 客户端", () => {
     await listTasks({ ...DEFAULT_TASK_QUERY, status: "cancelled" })
 
     expect(api.apiFetch).toHaveBeenCalledWith(
-      "/api/v1/tasks?status=cancelled&sort=created_at&order=desc&limit=50",
+      "/api/v1/tasks?status=cancelled&sort=priority&order=desc&limit=50",
       { signal: undefined }
     )
   })

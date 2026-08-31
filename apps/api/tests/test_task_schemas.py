@@ -49,6 +49,7 @@ def test_task_enums_expose_only_the_new_contract_values() -> None:
         "cancelled",
     ]
     assert [item.value for item in TaskStatusFilter] == [
+        "active",
         "all",
         "new",
         "in_progress",
@@ -226,10 +227,10 @@ def test_list_query_normalizes_topic_and_keeps_pagination_and_sorting() -> None:
 def test_list_query_has_stable_defaults_and_normalizes_blank_topic() -> None:
     query = TaskListQuery(topic="   ")
 
-    assert query.status is TaskStatusFilter.ALL
+    assert query.status is TaskStatusFilter.ACTIVE
     assert query.topic is None
     assert query.query is None
-    assert query.sort is TaskSort.CREATED_AT
+    assert query.sort is TaskSort.PRIORITY
     assert query.order is SortOrder.DESC
     assert query.cursor is None
     assert query.limit == 50
@@ -238,7 +239,6 @@ def test_list_query_has_stable_defaults_and_normalizes_blank_topic() -> None:
 @pytest.mark.parametrize(
     "payload",
     [
-        {"status": "active"},
         {"topic": "a" * 101},
         {"sort": "title"},
         {"cursor": ""},

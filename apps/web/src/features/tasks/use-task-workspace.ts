@@ -73,7 +73,7 @@ function queryFromLocation(): WorkspaceQuery {
   if (query) next.query = query
   if (topic) next.topic = topic
   if (
-    ["all", "new", "in_progress", "completed", "cancelled"].includes(
+    ["active", "all", "new", "in_progress", "completed", "cancelled"].includes(
       params.get("status") ?? ""
     )
   ) {
@@ -117,7 +117,10 @@ function taskMatchesQuery(task: Task, query: WorkspaceQuery): boolean {
       `${task.title}\n${task.description}\n${task.topic}`
         .toLocaleLowerCase()
         .includes(query.query.toLocaleLowerCase())) &&
-    (query.status === "all" || task.status === query.status) &&
+    (query.status === "all" ||
+      (query.status === "active"
+        ? task.status === "new" || task.status === "in_progress"
+        : task.status === query.status)) &&
     (query.topic === undefined || task.topic === query.topic)
   )
 }

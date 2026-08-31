@@ -22,6 +22,7 @@ type TodoWorkspaceProps = {
 }
 
 const statusLabels: Record<TaskStatusFilter, string> = {
+  active: "Active",
   all: "All",
   new: "New",
   in_progress: "In Progress",
@@ -85,7 +86,8 @@ export function TodoWorkspace({ timeZone }: TodoWorkspaceProps) {
     const params = new URLSearchParams()
     if (state.query.query !== undefined) params.set("query", state.query.query)
     if (state.query.topic !== undefined) params.set("topic", state.query.topic)
-    if (state.query.status !== "all") params.set("status", state.query.status)
+    if (state.query.status !== DEFAULT_TASK_QUERY.status)
+      params.set("status", state.query.status)
     if (state.query.sort !== DEFAULT_TASK_QUERY.sort)
       params.set("sort", state.query.sort)
     if (state.query.order !== DEFAULT_TASK_QUERY.order)

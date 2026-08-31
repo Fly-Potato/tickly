@@ -17,7 +17,9 @@ from pydantic import (
 
 TaskPriority = Literal["low", "medium", "high"]
 TaskStatusValue = Literal["new", "in_progress", "completed", "cancelled"]
-TaskStatusFilter = Literal["all", "new", "in_progress", "completed", "cancelled"]
+TaskStatusFilter = Literal[
+    "active", "all", "new", "in_progress", "completed", "cancelled"
+]
 TaskSort = Literal["serial", "created_at", "due_at", "priority"]
 SortOrder = Literal["asc", "desc"]
 
@@ -121,9 +123,9 @@ class ToolArguments(BaseModel):
 
 class ListTasksArguments(ToolArguments):
     query: Annotated[str | None, Field(max_length=200)] = None
-    status: TaskStatusFilter = "all"
+    status: TaskStatusFilter = "active"
     topic: TopicFilter = None
-    sort: TaskSort = "created_at"
+    sort: TaskSort = "priority"
     order: SortOrder = "desc"
     cursor: Cursor = None
     limit: PageLimit = 50
