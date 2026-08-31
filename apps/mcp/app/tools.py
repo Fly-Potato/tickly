@@ -184,9 +184,9 @@ def register_tools(
     async def list_tasks(
         ctx: Context[Any],
         query: str | None = None,
-        status: TaskStatusFilter = "all",
+        status: TaskStatusFilter = "active",
         topic: TopicFilter = None,
-        sort: TaskSort = "created_at",
+        sort: TaskSort = "priority",
         order: SortOrder = "desc",
         cursor: Cursor = None,
         limit: PageLimit = 50,

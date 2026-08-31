@@ -483,6 +483,58 @@ def test_list_cursor_pages_complete_root_groups(task_client: TestClient) -> None
     assert second.json()["next_cursor"] is None
 
 
+def test_list_defaults_to_active_priority_order(task_client: TestClient) -> None:
+    """省略筛选与排序参数时只返回活动任务，并优先展示高优先级。"""
+
+    headers = auth_headers(task_client)
+    low = create_task_via_api(
+        task_client,
+        headers,
+        "低优先级活动任务",
+        topic="工作",
+        priority="low",
+    )
+    completed = create_task_via_api(
+        task_client,
+        headers,
+        "已完成任务",
+        topic="工作",
+        priority="high",
+    )
+    cancelled = create_task_via_api(
+        task_client,
+        headers,
+        "已废弃任务",
+        topic="工作",
+        priority="high",
+    )
+    high = create_task_via_api(
+        task_client,
+        headers,
+        "高优先级活动任务",
+        topic="工作",
+        priority="high",
+    )
+    task_client.patch(
+        f"/api/v1/tasks/{completed['id']}",
+        headers=headers,
+        json={"status": "completed"},
+    )
+    task_client.patch(
+        f"/api/v1/tasks/{cancelled['id']}",
+        headers=headers,
+        json={"status": "cancelled"},
+    )
+
+    response = task_client.get("/api/v1/tasks", headers=headers)
+
+    assert response.status_code == 200
+    assert [group["task"]["id"] for group in response.json()["items"]] == [
+        high["id"],
+        low["id"],
+    ]
+
+
 def test_topics_and_parent_options_are_static_owned_routes(
     task_client: TestClient,
 ) -> None:

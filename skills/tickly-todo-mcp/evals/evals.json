@@ -60,6 +60,42 @@
       "prompt": "当前项目名是 qa-workbench，已有主题同时包含 QA Workbench 和 qa_workbench。添加任务“修复筛选”。",
       "expected_output": "两个已有主题都可能与候选项目名语义等价，AI 不得擅自选择或新建主题；应列出 MCP 返回的精确候选并请用户确认，确认前不写入。",
       "files": []
+    },
+    {
+      "id": 11,
+      "prompt": "当前 Git 项目根目录是 D:\\GitHub\\tickly。列一下我的待办。",
+      "expected_output": "先调用 list_topics 解析并复用当前项目的精确主题，再以该 topic 调用 list_tasks；用户未指定状态和排序时采用 active 默认范围，只展示 new/in_progress，并按 priority 降序、同优先级 created_at 降序完整分页。",
+      "files": [],
+      "expectations": [
+        "先用 list_topics 解析并复用当前项目的精确主题",
+        "未指定状态时采用 active 范围并排除 completed 与 cancelled",
+        "未指定排序时采用 priority 降序、同优先级 created_at 降序且无优先级最后",
+        "完整消费 next_cursor，并保持服务端全局顺序而不逐页重排"
+      ]
+    },
+    {
+      "id": 12,
+      "prompt": "当前项目是 test-center。列出这个项目包括已完成和已废弃在内的全部任务，按创建时间正序。",
+      "expected_output": "当前项目主题仍按语义等价规则解析，但用户显式范围覆盖默认值：list_tasks 使用 status=all、sort=created_at、order=asc，并完整消费 next_cursor。",
+      "files": [],
+      "expectations": [
+        "先用 list_topics 解析并复用 test-center 的唯一精确等价主题",
+        "显式传入 status=all 以覆盖 active 默认范围",
+        "显式传入 sort=created_at 与 order=asc 以覆盖默认排序",
+        "后续分页保持相同筛选和排序参数，并原样传递 next_cursor"
+      ]
+    },
+    {
+      "id": 13,
+      "prompt": "当前项目根目录名是 test-center，已有主题 Test Center 和 test-center-api。列出当前项目的待办，结果可能超过一页。",
+      "expected_output": "复用唯一语义等价的精确主题 Test Center；用户未指定状态和排序时使用 active、priority desc 与同优先级 created_at desc，并原样消费全部 next_cursor，不做本地重排。",
+      "files": [],
+      "expectations": [
+        "复用唯一语义等价的精确主题 Test Center，且不把 test-center-api 合并进范围",
+        "未指定状态时采用 active 范围并排除 completed 与 cancelled",
+        "未指定排序时采用 priority 降序、同优先级 created_at 降序且无优先级最后",
+        "将 next_cursor 视为不透明值原样传递直到为空，并保持服务端全局顺序"
+      ]
     }
   ]
 }

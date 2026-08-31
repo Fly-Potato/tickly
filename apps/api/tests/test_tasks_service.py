@@ -1597,6 +1597,99 @@ def test_tree_filters_roots_or_direct_children_and_keeps_complete_counts(
     assert tasks[5].id not in returned_ids
 
 
+def test_default_active_filter_hides_resolved_rows_but_keeps_parent_context(
+    session: Session,
+) -> None:
+    """默认列表只展示活动任务，但允许已处理父任务承载活动子任务上下文。"""
+
+    owner = add_user(session, "active-default-owner")
+    now = datetime(2026, 8, 18, 8, tzinfo=UTC)
+    active_root = add_task(
+        session,
+        owner.id,
+        "01000000-0000-0000-0000-000000000001",
+        "活动父任务",
+        serial=1,
+        created_at=now,
+        status="new",
+    )
+    active_child = add_task(
+        session,
+        owner.id,
+        "01000000-0000-0000-0000-000000000002",
+        "活动子任务",
+        serial=2,
+        created_at=now + timedelta(minutes=1),
+        status="in_progress",
+        parent_id=active_root.id,
+    )
+    add_task(
+        session,
+        owner.id,
+        "01000000-0000-0000-0000-000000000003",
+        "已完成子任务",
+        serial=3,
+        created_at=now + timedelta(minutes=2),
+        status="completed",
+        parent_id=active_root.id,
+    )
+    add_task(
+        session,
+        owner.id,
+        "01000000-0000-0000-0000-000000000004",
+        "已废弃子任务",
+        serial=4,
+        created_at=now + timedelta(minutes=3),
+        status="cancelled",
+        parent_id=active_root.id,
+    )
+    completed_parent = add_task(
+        session,
+        owner.id,
+        "01000000-0000-0000-0000-000000000005",
+        "已完成父任务",
+        serial=5,
+        created_at=now + timedelta(minutes=4),
+        status="completed",
+    )
+    context_child = add_task(
+        session,
+        owner.id,
+        "01000000-0000-0000-0000-000000000006",
+        "上下文中的活动子任务",
+        serial=6,
+        created_at=now + timedelta(minutes=5),
+        status="new",
+        parent_id=completed_parent.id,
+    )
+    add_task(
+        session,
+        owner.id,
+        "01000000-0000-0000-0000-000000000007",
+        "已废弃根任务",
+        serial=7,
+        created_at=now + timedelta(minutes=6),
+        status="cancelled",
+    )
+
+    page = list_tasks(
+        session,
+        owner.id,
+        TaskListQuery(sort=TaskSort.SERIAL, order=SortOrder.ASC),
+    )
+
+    assert [group.task.id for group in page.items] == [
+        active_root.id,
+        completed_parent.id,
+    ]
+    assert [child.id for child in page.items[0].children] == [active_child.id]
+    assert page.items[0].child_count == 3
+    assert page.items[0].resolved_child_count == 2
+    assert page.items[0].context_only is False
+    assert [child.id for child in page.items[1].children] == [context_child.id]
+    assert page.items[1].context_only is True
+
+
 def test_tree_groups_count_resolved_children_from_complete_direct_set(
     session: Session,
 ) -> None:
@@ -1664,12 +1757,26 @@ def test_tree_search_matches_title_description_and_topic_with_user_isolation(
 ) -> None:
     owner, tasks = add_tree_filter_fixture(session)
 
-    title_page = list_tasks(session, owner.id, TaskListQuery(query="root-new"))
-    description_page = list_tasks(
-        session, owner.id, TaskListQuery(query="child-completed")
+    title_page = list_tasks(
+        session,
+        owner.id,
+        TaskListQuery(query="root-new", status=TaskStatusFilter.ALL),
     )
-    topic_page = list_tasks(session, owner.id, TaskListQuery(query="work"))
-    other_page = list_tasks(session, owner.id, TaskListQuery(query="other-user"))
+    description_page = list_tasks(
+        session,
+        owner.id,
+        TaskListQuery(query="child-completed", status=TaskStatusFilter.ALL),
+    )
+    topic_page = list_tasks(
+        session,
+        owner.id,
+        TaskListQuery(query="work", status=TaskStatusFilter.ALL),
+    )
+    other_page = list_tasks(
+        session,
+        owner.id,
+        TaskListQuery(query="other-user", status=TaskStatusFilter.ALL),
+    )
 
     assert [group.task.id for group in title_page.items] == [tasks[1].id]
     assert [child.id for child in description_page.items[0].children] == [tasks[2].id]
@@ -1770,13 +1877,19 @@ def test_root_group_cursor_uses_root_limit_and_never_splits_children(
     first = list_tasks(
         session,
         owner.id,
-        TaskListQuery(sort=TaskSort.SERIAL, order=SortOrder.ASC, limit=1),
+        TaskListQuery(
+            status=TaskStatusFilter.ALL,
+            sort=TaskSort.SERIAL,
+            order=SortOrder.ASC,
+            limit=1,
+        ),
     )
     assert first.next_cursor is not None
     second = list_tasks(
         session,
         owner.id,
         TaskListQuery(
+            status=TaskStatusFilter.ALL,
             sort=TaskSort.SERIAL,
             order=SortOrder.ASC,
             limit=1,
@@ -1875,6 +1988,53 @@ def test_root_sort_modes_page_without_duplicates_or_omissions(
     assert len(titles) == len(set(titles)) == 3
 
 
+def test_default_priority_sort_uses_recent_creation_as_cursor_tie_break(
+    session: Session,
+) -> None:
+    """默认复合排序必须跨页保持优先级优先、同级任务较新者优先。"""
+
+    owner = add_user(session, "default-priority-cursor")
+    now = datetime(2026, 8, 18, 8, tzinfo=UTC)
+    fixtures = [
+        ("high-old", "02000000-0000-0000-0000-000000000005", "high", 0),
+        ("high-new", "02000000-0000-0000-0000-000000000001", "high", 4),
+        ("medium-new", "02000000-0000-0000-0000-000000000004", "medium", 3),
+        ("low-new", "02000000-0000-0000-0000-000000000003", "low", 2),
+        ("none-new", "02000000-0000-0000-0000-000000000002", None, 5),
+    ]
+    for serial, (title, task_id, priority, minutes) in enumerate(fixtures, start=1):
+        add_task(
+            session,
+            owner.id,
+            task_id,
+            title,
+            serial=serial,
+            created_at=now + timedelta(minutes=minutes),
+            priority=priority,
+        )
+
+    titles: list[str] = []
+    cursor: str | None = None
+    while True:
+        page = list_tasks(
+            session,
+            owner.id,
+            TaskListQuery(limit=1, cursor=cursor),
+        )
+        titles.extend(group.task.title for group in page.items)
+        cursor = page.next_cursor
+        if cursor is None:
+            break
+
+    assert titles == [
+        "high-new",
+        "high-old",
+        "medium-new",
+        "low-new",
+        "none-new",
+    ]
+
+
 @pytest.mark.parametrize(
     ("sort", "order", "expected_ids"),
     [
@@ -1902,10 +2062,10 @@ def test_root_sort_modes_page_without_duplicates_or_omissions(
             TaskSort.PRIORITY,
             SortOrder.ASC,
             [
-                "00000000-0000-0000-0000-000000000001",
                 "00000000-0000-0000-0000-000000000002",
-                "00000000-0000-0000-0000-000000000003",
+                "00000000-0000-0000-0000-000000000001",
                 "00000000-0000-0000-0000-000000000004",
+                "00000000-0000-0000-0000-000000000003",
             ],
         ),
         (

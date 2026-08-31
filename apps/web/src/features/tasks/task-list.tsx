@@ -19,6 +19,7 @@ type TaskListProps = {
 }
 
 const emptyMessages: Record<TaskStatusFilter, string> = {
+  active: "没有待处理的任务。",
   all: "还没有任务，先写下第一件事。",
   new: "还没有新任务。",
   in_progress: "没有进行中的任务。",

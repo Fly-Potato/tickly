@@ -8,8 +8,8 @@
 时，同事务废弃当前账号内尚未进行完的直接子任务，恢复父任务不反向恢复子任务。
 
 SQLite 可能返回无时区时间，分页游标统一按 UTC 解释。游标是严格校验的
-Base64URL JSON，不是授权凭据或秘密；它绑定状态、排序和方向，并用排序值加
-任务 ID 做 keyset 定位。列表按根任务分页，再用一次批量查询装配直接子任务；
+Base64URL JSON，不是授权凭据或秘密；它绑定状态、排序和方向，并用主排序值、
+必要的次排序时间和任务 ID 做 keyset 定位。列表按根任务分页，再用一次批量查询装配直接子任务；
 始终按用户过滤，不返回 total，也不记录任务内容。
 """
 
@@ -41,6 +41,7 @@ from app.schemas.tasks import (
 
 
 _PRIORITY_RANK = {None: 0, "low": 1, "medium": 2, "high": 3}
+_ACTIVE_STATUSES = (TaskStatus.NEW.value, TaskStatus.IN_PROGRESS.value)
 _SQLITE_MAX_INTEGER = 2**63 - 1
 
 
@@ -95,6 +96,7 @@ class _CursorPayload(BaseModel):
     order: SortOrder
     null_bucket: bool
     value: str | int | None
+    secondary: str | None = None
     id: UUID
 
     @field_validator("v", mode="before")
@@ -111,6 +113,7 @@ class _CursorPayload(BaseModel):
 class _CursorPosition:
     null_bucket: bool
     value: datetime | int | None
+    secondary: datetime | None
     task_id: str
 
 
@@ -214,7 +217,10 @@ def _decode_cursor(cursor: str, query: TaskListQuery) -> _CursorPosition:
                 raise InvalidCursor
         elif not 1 <= payload.value <= 3:
             raise InvalidCursor
+        if payload.secondary is None:
+            raise InvalidCursor
         value: datetime | int | None = payload.value
+        secondary = _parse_cursor_time(payload.secondary)
     elif query.sort is TaskSort.SERIAL:
         if (
             payload.null_bucket
@@ -223,18 +229,25 @@ def _decode_cursor(cursor: str, query: TaskListQuery) -> _CursorPosition:
         ):
             raise InvalidCursor
         value = payload.value
+        secondary = None
     elif query.sort is TaskSort.DUE_AT and payload.null_bucket:
         if payload.value is not None:
             raise InvalidCursor
         value = None
+        secondary = None
     else:
         if payload.null_bucket:
             raise InvalidCursor
         value = _parse_cursor_time(payload.value)
+        secondary = None
+
+    if query.sort is not TaskSort.PRIORITY and payload.secondary is not None:
+        raise InvalidCursor
 
     return _CursorPosition(
         null_bucket=payload.null_bucket,
         value=value,
+        secondary=secondary,
         task_id=str(payload.id),
     )
 
@@ -243,15 +256,19 @@ def _encode_cursor(task: Task, query: TaskListQuery) -> str:
     if query.sort is TaskSort.PRIORITY:
         null_bucket = task.priority is None
         value: str | int | None = _PRIORITY_RANK[task.priority]
+        secondary = _iso_utc(task.created_at)
     elif query.sort is TaskSort.DUE_AT:
         null_bucket = task.due_at is None
         value = None if task.due_at is None else _iso_utc(task.due_at)
+        secondary = None
     elif query.sort is TaskSort.SERIAL:
         null_bucket = False
         value = task.serial
+        secondary = None
     else:
         null_bucket = False
         value = _iso_utc(task.created_at)
+        secondary = None
 
     raw = _CursorPayload(
         v=1,
@@ -262,6 +279,7 @@ def _encode_cursor(task: Task, query: TaskListQuery) -> str:
         order=query.order,
         null_bucket=null_bucket,
         value=value,
+        secondary=secondary,
         id=UUID(task.id),
     ).model_dump_json().encode("utf-8")
     return base64.urlsafe_b64encode(raw).rstrip(b"=").decode("ascii")
@@ -785,9 +803,12 @@ def _after_value(
 def _matches_task(task: Task, query: TaskListQuery) -> bool:
     """按状态、关键词与大小写敏感主题的 AND 语义判断单个任务。"""
 
-    status_matches = (
-        query.status is TaskStatusFilter.ALL or task.status == query.status.value
-    )
+    if query.status is TaskStatusFilter.ACTIVE:
+        status_matches = task.status in _ACTIVE_STATUSES
+    else:
+        status_matches = (
+            query.status is TaskStatusFilter.ALL or task.status == query.status.value
+        )
     topic_matches = query.topic is None or task.topic == query.topic
     text_matches = query.query is None or query.query.casefold() in (
         f"{task.title}\n{task.description}\n{task.topic}".casefold()
@@ -812,7 +833,10 @@ def list_tasks(
     child_match = aliased(Task)
     root_predicates = []
     child_predicates = []
-    if query.status is not TaskStatusFilter.ALL:
+    if query.status is TaskStatusFilter.ACTIVE:
+        root_predicates.append(Task.status.in_(_ACTIVE_STATUSES))
+        child_predicates.append(child_match.status.in_(_ACTIVE_STATUSES))
+    elif query.status is not TaskStatusFilter.ALL:
         root_predicates.append(Task.status == query.status.value)
         child_predicates.append(child_match.status == query.status.value)
     if query.topic is not None:
@@ -868,10 +892,12 @@ def list_tasks(
         )
     elif query.sort is TaskSort.PRIORITY:
         sort_expression = priority_expression
+        # 默认优先级排序以创建时间和 ID 固定降序决胜，保证跨页结果稳定。
         statement = statement.order_by(
             asc(Task.priority.is_(None)),
             direction(priority_expression),
-            direction(Task.id),
+            desc(Task.created_at),
+            desc(Task.id),
         )
     else:
         sort_expression = Task.created_at
@@ -907,25 +933,43 @@ def list_tasks(
                 )
             )
         elif query.sort is TaskSort.PRIORITY and cursor.null_bucket:
-            id_predicate = (
-                Task.id > cursor.task_id
-                if query.order is SortOrder.ASC
-                else Task.id < cursor.task_id
-            )
-            statement = statement.where(Task.priority.is_(None), id_predicate)
-        elif query.sort is TaskSort.PRIORITY:
-            if type(cursor.value) is not int:
+            if cursor.secondary is None:
                 raise InvalidCursor
+            statement = statement.where(
+                Task.priority.is_(None),
+                or_(
+                    Task.created_at < cursor.secondary,
+                    and_(
+                        Task.created_at == cursor.secondary,
+                        Task.id < cursor.task_id,
+                    ),
+                ),
+            )
+        elif query.sort is TaskSort.PRIORITY:
+            if type(cursor.value) is not int or cursor.secondary is None:
+                raise InvalidCursor
+            priority_after = (
+                priority_expression > cursor.value
+                if query.order is SortOrder.ASC
+                else priority_expression < cursor.value
+            )
             statement = statement.where(
                 or_(
                     Task.priority.is_(None),
                     and_(
                         Task.priority.is_not(None),
-                        _after_value(
-                            priority_expression,
-                            cursor.value,
-                            cursor.task_id,
-                            query.order,
+                        or_(
+                            priority_after,
+                            and_(
+                                priority_expression == cursor.value,
+                                or_(
+                                    Task.created_at < cursor.secondary,
+                                    and_(
+                                        Task.created_at == cursor.secondary,
+                                        Task.id < cursor.task_id,
+                                    ),
+                                ),
+                            ),
                         ),
                     ),
                 )
@@ -974,16 +1018,20 @@ def list_tasks(
     for root in page_roots:
         root_matches = _matches_task(root, query)
         children = children_by_parent[root.id]
+        if root_matches and query.status is TaskStatusFilter.ACTIVE:
+            visible_children = [
+                child for child in children if child.status in _ACTIVE_STATUSES
+            ]
+        elif root_matches:
+            visible_children = children
+        else:
+            visible_children = [
+                child for child in children if _matches_task(child, query)
+            ]
         groups.append(
             TaskGroup(
                 task=root,
-                children=(
-                    children
-                    if root_matches
-                    else [
-                        child for child in children if _matches_task(child, query)
-                    ]
-                ),
+                children=visible_children,
                 child_count=len(children),
                 completed_child_count=sum(
                     child.status == TaskStatus.COMPLETED.value for child in children
